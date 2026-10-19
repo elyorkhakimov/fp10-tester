@@ -71,8 +71,10 @@ input[type=range]{width:100%;accent-color:var(--accent)}
       <button id="usbBtn" class="ghost">USB cable</button>
       <span id="status" class="pill">Not connected</span>
     </div>
-    <p class="note" style="margin-top:8px">Bluetooth: turn the piano on, tap Bluetooth and pick FP-10 from the list. No other app is needed.
-      If the piano isn't listed, close the Roland Piano App or any MIDI BLE app, because the piano accepts only one Bluetooth connection at a time.</p>
+    <p id="connMsg" class="note bad" hidden style="margin-top:8px"></p>
+    <p class="note" style="margin-top:8px">Bluetooth needs Chrome (Brave and Firefox block it). Turn the piano on, tap Bluetooth and pick FP-10 from the list. No other app is needed.
+      If the piano isn't listed, close the Roland Piano App or any MIDI BLE app, because the piano accepts only one Bluetooth connection at a time.
+      If it still isn't listed, Forget FP-10 in Android's Bluetooth settings and try again.</p>
     <div id="usbPorts" class="row" hidden style="margin-top:10px">
       <label>Send to<select id="outSel"></select></label>
       <label>Listen to<select id="inSel"></select></label>
@@ -199,7 +201,7 @@ function onDT1(addr, data){
   if (hits(REG.toneForSingle, 3)){
     const cat = get(REG.toneForSingle), idx = get(REG.toneForSingle, 2);
     const i = TONES.findIndex(([,[c,x]]) => c === cat && x === idx);
-    if (i >= 0) setTone(i, true);
+    if (i >= 0){ setTone(i, true); sendProg(progMap[i]); }
   }
   if (hits(REG.sequencerTempoRO, 2) && get(REG.sequencerTempoRO, 1) !== undefined)
     $('#bpm').value = get(REG.sequencerTempoRO)*128 + get(REG.sequencerTempoRO, 1);
@@ -229,7 +231,8 @@ GROUPS.forEach((g, cat) => {
     b.textContent = name; b.dataset.live = ''; b.disabled = true; b.setAttribute('aria-pressed', 'false');
     b.onclick = () => {
       setTone(i);
-      if ($('#demoOnTap').checked){ const ev = []; toneDemo(ev, 150, i); startPlay(ev); }
+      // Wait for the piano's program report, so the demo plays in the new tone the first time too.
+      if ($('#demoOnTap').checked){ const ev = []; toneDemo(ev, 300, i); startPlay(ev); }
     };
     toneBtns[i] = b; box.append(b);
   });
@@ -237,10 +240,38 @@ GROUPS.forEach((g, cat) => {
 function setTone(i, fromPiano){
   currentTone = i;
   toneBtns.forEach((b, k) => b.setAttribute('aria-pressed', k === i ? 'true' : 'false'));
-  $('#toneNow').textContent = TONES[i][0];
-  if (fromPiano) return;
+  $('#toneNow').textContent = i === null ? 'changed on the piano' : TONES[i][0];
+  if (fromPiano || i === null) return;
   const [cat, idx] = TONES[i][1];
+  pendingTone = i; clearTimeout(pendingTimer); pendingTimer = setTimeout(() => { pendingTone = null; }, 1500);
   send(sysexWrite(REG.toneForSingle, [cat, 0, idx]));
+  sendProg(progMap[i]);
+}
+
+/* The FP-10 keeps two tones: the keyboard's (set by the SysEx above) and the one for notes that arrive
+   over MIDI, which stays Grand Piano unless it gets bank select + program change. After every keyboard
+   tone change the piano reports it as bank select + program change, so we learn tone → program from those
+   reports and send the program back. [CC0, CC32, program] */
+const PROG_KEY = 'fp10.progMap';
+let progMap = { 0:[0,68,0], 1:[16,67,0], 2:[4,64,0], 35:[0,66,53] };   // seen in a log from this FP-10
+try { Object.assign(progMap, JSON.parse(localStorage.getItem(PROG_KEY))); } catch(e){}
+let inProg = [0,0,0], lastProg = null, sentProg = null, pendingTone = null, pendingTimer;
+function sendProg(p){
+  if (!p || (sentProg && sentProg.join() === p.join())) return;
+  send([0xB0, 0, p[0]]); send([0xB0, 32, p[1]]); send([0xC0, p[2]]);
+  sentProg = p.slice();
+}
+function onProgReport(){
+  const p = lastProg = inProg.slice();
+  if (pendingTone !== null){
+    progMap[pendingTone] = p; pendingTone = null;
+    try { localStorage.setItem(PROG_KEY, JSON.stringify(progMap)); } catch(e){}
+  } else {
+    // Changed with the piano's own buttons.
+    const i = TONES.findIndex((_, k) => progMap[k] && progMap[k].join() === p.join());
+    setTone(i >= 0 ? i : null, true);
+  }
+  sendProg(p);
 }
 // Rising arpeggio, then a held chord. Returns its length in ms.
 function toneDemo(ev, t, i){
@@ -261,14 +292,16 @@ const BLE_MAX = 20;   // the FP-10 uses the minimum MTU: 20 bytes per write, lar
 const ble = { device:null, chr:null, queue:[], busy:false, timers:new Set(), sysex:null, running:0, manual:false };
 
 function setStatus(text, cls){ const s = $('#status'); s.textContent = text; s.className = 'pill ' + (cls||''); }
+function connMsg(text){ const m = $('#connMsg'); m.textContent = text || ''; m.hidden = !text; if (text) log(text, 'bad'); }
 function enableAll(on){
   document.querySelectorAll('[data-live]').forEach(el => el.disabled = !on);
   if (rec) $('#recBtn').disabled = false;
 }
 function useLink(l){
-  link = l;
+  link = l; sentProg = null;
   enableAll(!!l);
   if (!l) return;
+  connMsg('');
   setStatus('Connected: ' + l.name + (l.kind === 'ble' ? ' (Bluetooth)' : ''), 'on');
   initPiano();
 }
@@ -277,14 +310,19 @@ $('#bleBtn').onclick = async () => {
   if (ble.chr){ ble.manual = true; ble.device.gatt.disconnect(); return; }
   if (!navigator.bluetooth){
     setStatus('Bluetooth not available', 'err');
-    log('This browser has no Web Bluetooth. Use Chrome on Android, with the page opened over https.', 'bad'); return;
+    connMsg(navigator.brave ? 'Brave blocks Web Bluetooth. Open this page in Chrome to connect over Bluetooth.'
+      : 'This browser has no Web Bluetooth. Open this page in Chrome on Android.');
+    return;
   }
   let device;
+  connMsg(''); log('Opening the Bluetooth device list…');
   try {
     device = await navigator.bluetooth.requestDevice({
       filters:[{services:[BLE_SVC]}, {namePrefix:'FP-'}, {namePrefix:'Roland'}], optionalServices:[BLE_SVC] });
   } catch(e){
-    log(e.name === 'NotFoundError' ? 'No piano picked.' : 'Bluetooth: ' + e.message, 'bad'); return;
+    if (e.name === 'NotFoundError' && /cancel/i.test(e.message)) log('No piano picked.');
+    else connMsg('Bluetooth: ' + e.message + (navigator.brave ? ' Brave blocks Web Bluetooth; use Chrome.' : ''));
+    return;
   }
   closeUsb();
   if (ble.device && ble.device !== device) ble.device.removeEventListener('gattserverdisconnected', onBleDisconnect);
@@ -302,7 +340,7 @@ async function openBle(){
     await chr.startNotifications();
     ble.chr = chr; ble.sysex = null; ble.running = 0;
   } catch(e){
-    setStatus('Bluetooth failed', 'err'); log('Bluetooth connect failed: ' + e.message, 'bad'); return false;
+    setStatus('Bluetooth failed', 'err'); connMsg('Bluetooth connect failed: ' + e.message); return false;
   }
   $('#bleBtn').textContent = 'Disconnect';
   useLink({ kind:'ble', name: ble.device.name || 'Bluetooth piano', send: bleSend, clear: bleClear });
@@ -422,18 +460,20 @@ function closeUsb(){
   out = inp = null; $('#usbPorts').hidden = true;
   if (link && link.kind === 'midi') useLink(null);
 }
+// Prefer the piano; never jump to some other MIDI device on the phone when the piano goes away.
 function fillPorts(){
-  const outs = [...access.outputs.values()], ins = [...access.inputs.values()];
-  const pick = list => list.find(p => /roland|fp-?10|digital piano/i.test(p.name)) || list[0];
+  const live = p => p.state !== 'disconnected';
+  const outs = [...access.outputs.values()].filter(live), ins = [...access.inputs.values()].filter(live);
+  const isPiano = p => /roland|fp-?10|digital piano/i.test(p.name);
   for (const [sel, list] of [[$('#outSel'), outs], [$('#inSel'), ins]]){
     const prev = sel.value; sel.innerHTML = '';
     list.forEach(p => sel.add(new Option(p.name, p.id)));
-    const best = list.find(p => p.id === prev) || pick(list);
-    if (best) sel.value = best.id;
+    const best = list.find(p => p.id === prev) || list.find(isPiano) || (!prev && list.length === 1 ? list[0] : null);
+    sel.value = best ? best.id : '';
   }
   selectPorts();
-  if (!outs.length){ setStatus('No MIDI devices found', 'err'); useLink(null);
-    log('No MIDI outputs. Check the cable, or use the Bluetooth button.', 'bad'); }
+  if (!out){ setStatus(outs.length ? 'Piano not found' : 'No MIDI devices found', 'err');
+    log('Piano not connected. Check the cable, pick it under Send to, or use the Bluetooth button.', 'bad'); }
 }
 function selectPorts(){
   if (inp) inp.onmidimessage = null;
@@ -443,6 +483,7 @@ function selectPorts(){
   if (inp) inp.onmidimessage = e => handleIn(e.data, e.timeStamp);
   if (out && out !== prevOut)
     useLink({ kind:'midi', name: out.name, send: (b, w) => w ? out.send(b, w) : out.send(b), clear: () => out.clear && out.clear() });
+  else if (!out && link && link.kind === 'midi') useLink(null);
 }
 $('#outSel').onchange = selectPorts; $('#inSel').onchange = selectPorts;
 
@@ -451,6 +492,9 @@ function handleIn(d, time){
   const st = d[0] & 0xF0;
   if (d[0] === 0xFE || d[0] === 0xF8) return; // active sensing / clock
   if (rec && d[0] >= 0x80 && d[0] < 0xF0) recAdd(time, Array.from(d));
+  if (d[0] === 0xB0 && d[1] === 0) inProg[0] = d[2];
+  if (d[0] === 0xB0 && d[1] === 32) inProg[1] = d[2];
+  if (d[0] === 0xC0){ inProg[2] = d[1]; onProgReport(); }
   if (st === 0x90 && d[2] > 0) log('← key ' + noteName(d[1]) + '  velocity ' + d[2], 'in');
   else if (st === 0x80 || (st === 0x90 && d[2] === 0)) { /* note off, skip */ }
   else if (st === 0xB0) log('← control ' + d[1] + ' = ' + d[2] + (d[1]===64 ? ' (sustain pedal)' : ''), 'in');
@@ -477,7 +521,7 @@ function pump(){
   while (sched.i < sched.events.length && sched.t0 + sched.events[sched.i][0] <= horizon){
     const [t, b] = sched.events[sched.i++];
     if (typeof b === 'function') sched.fnTimers.push(setTimeout(b, sched.t0 + t - now));
-    else send(b, sched.t0 + t);
+    else { send(b, sched.t0 + t); if ((b[0] & 0xF0) === 0xC0) sentProg = null; }
   }
   const end = sched.events.length ? sched.events[sched.events.length-1][0] : 0;
   if (sched.i >= sched.events.length && now > sched.t0 + end + 50) finishPlay();
@@ -569,7 +613,8 @@ function recInfo(){
 }
 $('#recBtn').onclick = () => rec ? stopRec() : startRec();
 function startRec(){
-  rec = { events:[], notes:0, date: Date.now(), tone: currentTone, timer: setInterval(recInfo, 500) };
+  rec = { events:[], notes:0, date: Date.now(), tone: currentTone, timer: setInterval(recInfo, 500),
+          prog: currentTone !== null && progMap[currentTone] || lastProg };
   const b = $('#recBtn'); b.textContent = '■ Stop recording'; b.classList.add('rec-on');
   recInfo(); keepAwake(true); log('Recording started.', 'in');
 }
@@ -589,7 +634,7 @@ function stopRec(){
   }
   held.forEach(b => events.push([end, (b[0] & 0xF0) === 0xB0 ? [b[0], 64, 0] : [0x80 | (b[0] & 15), b[1], 0]]));
   const num = (takes.length ? takes[takes.length-1].num : 0) + 1;
-  takes.push({ num, name: 'Take ' + num, date: r.date, dur: end, notes: r.notes, tone: r.tone, events });
+  takes.push({ num, name: 'Take ' + num, date: r.date, dur: end, notes: r.notes, tone: r.tone, prog: r.prog, events });
   saveTakes(); renderTakes();
   $('#recInfo').textContent = 'Saved Take ' + num + ' (' + fmt(end) + ', ' + r.notes + ' notes).';
   log('Recording saved: Take ' + num, 'in');
@@ -624,8 +669,10 @@ function renderTakes(){
   });
 }
 function playTake(tk, btn){
+  // Start in the take's tone, both on the keyboard and for the notes we send.
   const ev = tk.events.map(([t, b]) => [t + 200, b]);
-  if (TONES[tk.tone]) ev.unshift([0, () => setTone(tk.tone)]);
+  const prog = tk.prog || progMap[tk.tone];
+  ev.unshift([0, () => { if (TONES[tk.tone]) setTone(tk.tone); sentProg = null; sendProg(prog); }]);
   startPlay(ev, btn);
 }
 function deleteTake(tk){
