@@ -23,6 +23,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--body);
 main{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
 h1{font:600 28px/1.1 var(--display);margin:4px 0 0;text-wrap:balance}
 h2{font:600 12px var(--body);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+h3{font:600 13px var(--body);color:var(--muted);margin:12px 0 6px}
 p{margin:0}
 .sub{color:var(--muted)}
 section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
@@ -30,77 +31,103 @@ section{background:var(--panel);border:1px solid var(--line);border-radius:10px;
 button{font:600 14px var(--body);background:var(--key);color:var(--keyfg);border:0;border-radius:6px;
   padding:10px 14px;min-height:42px;cursor:pointer}
 button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+button.rec-on{background:var(--accent);color:#fff}
 button:disabled{opacity:.35;cursor:default}
 button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 select,input[type=number]{font:14px var(--body);background:var(--bg);color:var(--ink);border:1px solid var(--line);
   border-radius:6px;padding:9px;min-height:42px;max-width:100%}
 label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted);flex:1 1 140px;min-width:0}
+label.check{flex-direction:row;align-items:center;gap:8px;color:var(--ink);font-size:14px}
+label.check input{width:20px;height:20px;accent-color:var(--accent)}
 input[type=range]{width:100%;accent-color:var(--accent)}
 .pill{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:3px 10px;border-radius:99px;border:1px solid var(--line)}
 .pill::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--muted)}
 .pill.on::before{background:var(--ok)} .pill.err::before{background:var(--accent)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.tones{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px}
+.tones button{background:transparent;color:var(--ink);border:1px solid var(--line);font-weight:400;text-align:left;padding:8px 10px;min-height:40px}
+.tones button[aria-pressed=true]{background:var(--key);color:var(--keyfg);border-color:var(--key);font-weight:600}
+.take{border-top:1px solid var(--line);padding:10px 0 2px;display:flex;flex-direction:column;gap:6px}
+.take:first-child{border-top:0}
+.take button{min-height:38px;padding:8px 12px}
+#takes{margin-top:10px}
 #log{font:12px/1.5 var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:6px;
   padding:8px;height:200px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin-top:8px}
 .in{color:var(--ok)} .out{color:var(--muted)} .bad{color:var(--accent)}
 .note{font-size:13px;color:var(--muted)}
-ol{margin:0;padding-left:20px} li{margin:2px 0}
 </style>
 </head>
 <body>
 <main>
   <header>
     <h1>FP-10 MIDI Tester</h1>
-    <p class="sub">Checks that this phone can play notes on the Roland FP-10 and change its settings.</p>
+    <p class="sub">Connects this phone to the Roland FP-10 over Bluetooth or USB to play notes, try every tone, change settings and record.</p>
   </header>
 
   <section>
     <h2>1 · Connect</h2>
-    <ol class="note">
-      <li>USB: phone USB-C → FP-10 "Computer" port (USB-B). Or Bluetooth: connect the piano with a MIDI BLE app first.</li>
-      <li>Tap Connect and allow MIDI access when Chrome asks.</li>
-    </ol>
-    <div class="row" style="margin-top:10px">
-      <button id="connect">Connect</button>
+    <div class="row">
+      <button id="bleBtn">Bluetooth</button>
+      <button id="usbBtn" class="ghost">USB cable</button>
       <span id="status" class="pill">Not connected</span>
     </div>
-    <div class="row" style="margin-top:10px">
-      <label>Send to<select id="outSel" disabled></select></label>
-      <label>Listen to<select id="inSel" disabled></select></label>
+    <p class="note" style="margin-top:8px">Bluetooth: turn the piano on, tap Bluetooth and pick FP-10 from the list. No other app is needed.
+      If the piano isn't listed, close the Roland Piano App or any MIDI BLE app, because the piano accepts only one Bluetooth connection at a time.</p>
+    <div id="usbPorts" class="row" hidden style="margin-top:10px">
+      <label>Send to<select id="outSel"></select></label>
+      <label>Listen to<select id="inSel"></select></label>
     </div>
   </section>
 
   <section>
-    <h2>2 · Play notes</h2>
+    <h2>2 · Tones · <span id="toneNow">unknown</span></h2>
+    <div id="tones"></div>
+    <div class="row" style="margin-top:12px">
+      <label class="check"><input type="checkbox" id="demoOnTap" checked> Play a short demo when I tap a tone</label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="tour" data-live disabled>Play through all 36</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>3 · Record</h2>
+    <div class="row">
+      <button id="recBtn" data-live disabled>● Record</button>
+      <span id="recInfo" class="note">Records the keys, how hard you play them and the pedal.</span>
+    </div>
+    <p class="note" style="margin-top:8px">This records MIDI, not audio: Play makes the piano play your take back exactly. Save .mid to open it in any music app or notation editor.
+      The screen stays on while recording.</p>
+    <div id="takes"></div>
+  </section>
+
+  <section>
+    <h2>4 · Piano settings</h2>
+    <div class="row">
+      <label>Volume <span id="volVal">50</span><input id="vol" type="range" min="0" max="100" value="50" data-live disabled></label>
+      <button id="readVol" class="ghost" data-live disabled>Read volume back</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label>Tempo (BPM)<input id="bpm" type="number" min="20" max="250" value="80" data-live disabled></label>
+      <button id="metro" data-live disabled>Metronome on/off</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>5 · Play notes</h2>
     <div class="grid">
-      <button data-test="c" disabled>Middle C</button>
-      <button data-test="scale" disabled>C major scale</button>
-      <button data-test="dyn" disabled>Dynamics pp → ff</button>
-      <button data-test="pedal" disabled>Sustain pedal</button>
-      <button data-test="ode" disabled>Ode to Joy, with crescendo</button>
-      <button data-test="stop" class="ghost" disabled>Stop all notes</button>
+      <button data-test="c" data-live disabled>Middle C</button>
+      <button data-test="scale" data-live disabled>C major scale</button>
+      <button data-test="dyn" data-live disabled>Dynamics pp → ff</button>
+      <button data-test="pedal" data-live disabled>Sustain pedal</button>
+      <button data-test="ode" data-live disabled>Ode to Joy, with crescendo</button>
+      <button data-test="stop" class="ghost" data-live disabled>Stop all notes</button>
     </div>
     <p class="note" style="margin-top:8px">Dynamics plays the same chord six times, each louder. You should hear clear steps.</p>
   </section>
 
   <section>
-    <h2>3 · Piano settings (Roland SysEx)</h2>
-    <div class="row">
-      <label>Volume <span id="volVal">50</span><input id="vol" type="range" min="0" max="100" value="50" disabled></label>
-      <button id="readVol" class="ghost" disabled>Read volume back</button>
-    </div>
-    <div class="row" style="margin-top:10px">
-      <label>Tone<select id="tone" disabled></select></label>
-    </div>
-    <div class="row" style="margin-top:10px">
-      <label>Tempo (BPM)<input id="bpm" type="number" min="20" max="250" value="80" disabled></label>
-      <button id="metro" disabled>Metronome on/off</button>
-    </div>
-    <p class="note" style="margin-top:8px">If the piano answers "Read volume back", two-way SysEx works and an app can both set and check settings.</p>
-  </section>
-
-  <section>
-    <h2>4 · MIDI log</h2>
+    <h2>6 · MIDI log</h2>
     <p class="note">Play keys on the piano: they should show up here as incoming notes.</p>
     <div id="log" aria-live="polite"></div>
   </section>
@@ -108,6 +135,7 @@ ol{margin:0;padding-left:20px} li{margin:2px 0}
 
 <script>
 const $ = s => document.querySelector(s);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 const logEl = $('#log');
 function log(msg, cls='out'){
   const d = document.createElement('div'); d.className = cls; d.textContent = msg;
@@ -117,44 +145,282 @@ function log(msg, cls='out'){
 const hex = a => Array.from(a, b => b.toString(16).padStart(2,'0')).join(' ');
 const NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const noteName = n => NAMES[n%12] + (Math.floor(n/12)-1);
+const fmt = ms => { const s = Math.round(ms/1000); return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0'); };
 
-let access = null, out = null, inp = null;
+/* link = the active connection: {kind, name, send(bytes, when), clear()}. Incoming messages go to handleIn(). */
+let link = null;
 
 /* ---- Roland SysEx, ported from evanraalte/RolandPiano ---- */
 const ROLAND_ID = [0x41,0x10,0x00,0x00,0x00,0x28];
 const REG = {
-  masterVolume:[1,0,2,0x13], toneForSingle:[1,0,2,7], connection:[1,0,3,6],
-  sequencerTempoWO:[1,0,3,9], metronomeSwToggle:[1,0,5,9], metronomeStatus:[1,0,1,0x0F]
+  masterVolume:[1,0,2,0x13], toneForSingle:[1,0,2,7], connection:[1,0,3,6], applicationMode:[1,0,3,0],
+  sequencerTempoWO:[1,0,3,9], sequencerTempoRO:[1,0,1,8], metronomeSwToggle:[1,0,5,9], metronomeStatus:[1,0,1,0x0F]
 };
-const REG_NAME = Object.fromEntries(Object.entries(REG).map(([k,v]) => [v.join(','), k]));
 const checksum = bytes => (128 - (bytes.reduce((a,b)=>a+b,0) % 128)) & 0x7F;
 function sysexWrite(addr, data){
   return [0xF0, ...ROLAND_ID, 0x12, ...addr, ...data, checksum([...addr, ...data]), 0xF7];
 }
 function sysexRead(addr, size){
-  const sz = [0,0,0,size];
+  const sz = [0,0,(size >> 7) & 0x7F, size & 0x7F];
   return [0xF0, ...ROLAND_ID, 0x11, ...addr, ...sz, checksum([...addr, ...sz]), 0xF7];
 }
 function send(bytes, when){
-  if (!out) return;
-  try { when ? out.send(bytes, when) : out.send(bytes); }
+  if (!link) return;
+  try { link.send(bytes, when); }
   catch(e){ log('Send failed: ' + e.message, 'bad'); return; }
   if (bytes[0] === 0xF0) log('→ SysEx ' + hex(bytes));
 }
+
+/* Handshake the Roland app sends on connect. Over Bluetooth the FP-10 ignores setting writes until
+   it has seen these reads (found by github.com/voloshink/fp10-controller). The two last bulk reads
+   also report the piano's current tone, volume, tempo and metronome state. */
+async function initPiano(){
+  const steps = [
+    sysexRead([1,0,7,0], 8), sysexRead([1,0,8,0], 1), [0xF0,0x7E,0x10,0x06,0x01,0xF7], 300,
+    sysexRead([1,0,0,0], 127), 500, [0xF0,0x7E,0x7F,0x06,0x01,0xF7], 300,
+    sysexWrite(REG.connection, [1]), sysexWrite(REG.applicationMode, [0,1]),
+    sysexRead([1,0,1,0], 128), sysexRead([1,0,2,0], 128), 500
+  ];
+  for (const s of steps){ if (!link) return; typeof s === 'number' ? await sleep(s) : send(s); }
+  log('Piano ready.', 'in');
+}
+
+/* Piano state, filled from DT1 messages. Bulk replies cover many registers, so store each byte by address. */
+const regs = new Map();
+const addrKey = a => a.join(',');
+function onDT1(addr, data){
+  let [a0,a1,a2,a3] = addr;
+  data.forEach(v => { regs.set(addrKey([a0,a1,a2,a3]), v); if (++a3 > 0x7F){ a3 = 0; if (++a2 > 0x7F){ a2 = 0; a1++; } } });
+  const get = (reg, k=0) => regs.get(addrKey([reg[0], reg[1], reg[2], reg[3]+k]));
+  // Does this message cover register reg (n bytes long)?
+  const hits = (reg, n=1) => addr[0]===reg[0] && addr[1]===reg[1] && addr[2]===reg[2]
+    && reg[3] < addr[3] + data.length && reg[3] + n > addr[3];
+  if (hits(REG.masterVolume)){ const v = get(REG.masterVolume); $('#vol').value = v; $('#volVal').textContent = v; }
+  if (hits(REG.toneForSingle, 3)){
+    const cat = get(REG.toneForSingle), idx = get(REG.toneForSingle, 2);
+    const i = TONES.findIndex(([,[c,x]]) => c === cat && x === idx);
+    if (i >= 0) setTone(i, true);
+  }
+  if (hits(REG.sequencerTempoRO, 2) && get(REG.sequencerTempoRO, 1) !== undefined)
+    $('#bpm').value = get(REG.sequencerTempoRO)*128 + get(REG.sequencerTempoRO, 1);
+  if (hits(REG.metronomeStatus)) log('   metronome ' + (get(REG.metronomeStatus) ? 'on' : 'off'), 'in');
+}
+
+/* ---- Tones: all 36 from the Roland Piano App list. [name, [category, index], demo octave shift] ---- */
 const TONES = [
   ['Grand Piano 1',[0,0]],['Grand Piano 2',[0,1]],['Grand Piano 3',[0,2]],['Grand Piano 4',[0,3]],
   ['Ragtime Piano',[0,4]],['Harpsichord 1',[0,5]],['Harpsichord 2',[0,6]],
-  ['E. Piano 1',[1,0]],['E. Piano 2',[1,1]],['E. Piano 3',[1,2]],['Clav',[1,3]],['Vibraphone',[1,4]],['Celesta',[1,5]],
-  ['Strings 1',[2,0]],['Strings 2',[2,1]],['Harp',[2,2]],['Jazz Organ 1',[2,3]],['Church Organ 1',[2,5]],['Choir 1',[2,8]]
+  ['E. Piano 1',[1,0]],['E. Piano 2',[1,1]],['E. Piano 3',[1,2]],['Clav',[1,3]],['Vibraphone',[1,4]],['Celesta',[1,5]],['Synth Bell',[1,6]],
+  ['Strings 1',[2,0]],['Strings 2',[2,1]],['Harp',[2,2]],['Jazz Organ 1',[2,3]],['Jazz Organ 2',[2,4]],
+  ['Church Organ 1',[2,5]],['Church Organ 2',[2,6]],['Accordion',[2,7]],['Choir 1',[2,8]],['Jazz Scat',[2,9]],
+  ['Choir 2',[2,10]],['Choir 3',[2,11]],['Synth Pad',[2,12]],['Nylon-str. Gtr',[2,13]],['Steel-str. Gtr',[2,14]],
+  ['Decay Strings',[2,15]],['Decay Choir',[2,16]],['Decay Choir Pad',[2,17]],
+  ['Acoustic Bass',[2,18],-12],['A.Bass + Cymbal',[2,19],-12],['Fingered Bass',[2,20],-12],['Thum Voice',[2,21]]
 ];
-const toneSel = $('#tone');
-TONES.forEach(([name,[cat,idx]],i) => { const o = new Option(name, i); toneSel.add(o); });
+const GROUPS = ['Piano','E. Piano','Other'];
+let currentTone = null;
+const toneBtns = [];
+GROUPS.forEach((g, cat) => {
+  const h = document.createElement('h3'); h.textContent = g; $('#tones').append(h);
+  const box = document.createElement('div'); box.className = 'tones'; $('#tones').append(box);
+  TONES.forEach(([name,[c]], i) => {
+    if (c !== cat) return;
+    const b = document.createElement('button');
+    b.textContent = name; b.dataset.live = ''; b.disabled = true; b.setAttribute('aria-pressed', 'false');
+    b.onclick = () => {
+      setTone(i);
+      if ($('#demoOnTap').checked){ const ev = []; toneDemo(ev, 150, i); startPlay(ev); }
+    };
+    toneBtns[i] = b; box.append(b);
+  });
+});
+function setTone(i, fromPiano){
+  currentTone = i;
+  toneBtns.forEach((b, k) => b.setAttribute('aria-pressed', k === i ? 'true' : 'false'));
+  $('#toneNow').textContent = TONES[i][0];
+  if (fromPiano) return;
+  const [cat, idx] = TONES[i][1];
+  send(sysexWrite(REG.toneForSingle, [cat, 0, idx]));
+}
+// Rising arpeggio, then a held chord. Returns its length in ms.
+function toneDemo(ev, t, i){
+  const sh = TONES[i][2] || 0;
+  [60,64,67,72].forEach((n,k) => note(ev, n+sh, 85, t + k*180, 170));
+  [48,60,64,67].forEach(n => note(ev, n+sh, 75, t + 800, 1300));
+  return 2100;
+}
+$('#tour').onclick = e => {
+  const ev = []; let t = 0;
+  TONES.forEach((_, i) => { ev.push([t, () => setTone(i)]); t += toneDemo(ev, t + 200, i) + 800; });
+  startPlay(ev, e.currentTarget);
+};
 
-/* ---- Connect ---- */
+/* ---- Connect: Bluetooth (Web Bluetooth + BLE-MIDI framing) ---- */
+const BLE_SVC = '03b80e5a-ede8-4b33-a751-6ce34ec4c700', BLE_CHR = '7772e5db-3868-4112-a1a9-f2669d106bf3';
+const BLE_MAX = 20;   // the FP-10 uses the minimum MTU: 20 bytes per write, larger writes are dropped
+const ble = { device:null, chr:null, queue:[], busy:false, timers:new Set(), sysex:null, running:0, manual:false };
+
 function setStatus(text, cls){ const s = $('#status'); s.textContent = text; s.className = 'pill ' + (cls||''); }
 function enableAll(on){
-  document.querySelectorAll('button[data-test], #vol, #readVol, #tone, #bpm, #metro, #outSel, #inSel')
-    .forEach(el => el.disabled = !on);
+  document.querySelectorAll('[data-live]').forEach(el => el.disabled = !on);
+  if (rec) $('#recBtn').disabled = false;
+}
+function useLink(l){
+  link = l;
+  enableAll(!!l);
+  if (!l) return;
+  setStatus('Connected: ' + l.name + (l.kind === 'ble' ? ' (Bluetooth)' : ''), 'on');
+  initPiano();
+}
+
+$('#bleBtn').onclick = async () => {
+  if (ble.chr){ ble.manual = true; ble.device.gatt.disconnect(); return; }
+  if (!navigator.bluetooth){
+    setStatus('Bluetooth not available', 'err');
+    log('This browser has no Web Bluetooth. Use Chrome on Android, with the page opened over https.', 'bad'); return;
+  }
+  let device;
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters:[{services:[BLE_SVC]}, {namePrefix:'FP-'}, {namePrefix:'Roland'}], optionalServices:[BLE_SVC] });
+  } catch(e){
+    log(e.name === 'NotFoundError' ? 'No piano picked.' : 'Bluetooth: ' + e.message, 'bad'); return;
+  }
+  closeUsb();
+  if (ble.device && ble.device !== device) ble.device.removeEventListener('gattserverdisconnected', onBleDisconnect);
+  ble.device = device; ble.manual = false;
+  device.addEventListener('gattserverdisconnected', onBleDisconnect);
+  await openBle();
+};
+async function openBle(){
+  setStatus('Connecting…');
+  try {
+    const server = await ble.device.gatt.connect();
+    const chr = await (await server.getPrimaryService(BLE_SVC)).getCharacteristic(BLE_CHR);
+    chr.removeEventListener('characteristicvaluechanged', onBleData);
+    chr.addEventListener('characteristicvaluechanged', onBleData);
+    await chr.startNotifications();
+    ble.chr = chr; ble.sysex = null; ble.running = 0;
+  } catch(e){
+    setStatus('Bluetooth failed', 'err'); log('Bluetooth connect failed: ' + e.message, 'bad'); return false;
+  }
+  $('#bleBtn').textContent = 'Disconnect';
+  useLink({ kind:'ble', name: ble.device.name || 'Bluetooth piano', send: bleSend, clear: bleClear });
+  return true;
+}
+async function onBleDisconnect(){
+  ble.chr = null; bleClear(); $('#bleBtn').textContent = 'Bluetooth';
+  if (link && link.kind === 'ble') useLink(null);
+  if (ble.manual){ setStatus('Disconnected'); log('Bluetooth disconnected.'); return; }
+  setStatus('Connection lost, reconnecting…', 'err'); log('Bluetooth connection lost. Reconnecting…', 'bad');
+  for (let k = 0; k < 3; k++){
+    await sleep(1500);
+    if (ble.manual || ble.chr) return;
+    if (await openBle()) return;
+  }
+  setStatus('Connection lost', 'err'); log('Could not reconnect. Tap Bluetooth to try again.', 'bad');
+}
+
+// Outgoing: messages wait in a queue; each write packs as many as fit in 20 bytes.
+function bleSend(bytes, when){
+  const delay = when ? when - performance.now() : 0;
+  if (delay > 4){ const id = setTimeout(() => { ble.timers.delete(id); bleQueue(bytes); }, delay); ble.timers.add(id); }
+  else bleQueue(bytes);
+}
+function bleClear(){ ble.timers.forEach(clearTimeout); ble.timers.clear(); ble.queue.length = 0; }
+function bleQueue(bytes){ ble.queue.push(bytes); if (!ble.busy) blePump(); }
+async function blePump(){
+  ble.busy = true;
+  try {
+    while (ble.queue.length && ble.chr){
+      for (const pkt of blePackets()){
+        if (!ble.chr) break;
+        await (ble.chr.properties.writeWithoutResponse ? ble.chr.writeValueWithoutResponse(pkt) : ble.chr.writeValue(pkt));
+      }
+    }
+  } catch(e){ log('Bluetooth send failed: ' + e.message, 'bad'); ble.queue.length = 0; }
+  ble.busy = false;
+}
+function blePackets(){
+  const t = Math.floor(performance.now()) & 0x1FFF;
+  const hdr = 0x80 | (t >> 7), ts = 0x80 | (t & 0x7F);
+  if (ble.queue[0][0] === 0xF0){
+    // SysEx: [hdr ts F0 data…] [hdr data…] … [hdr data… ts F7]
+    const body = ble.queue.shift().slice(0, -1), pkts = [];
+    let pkt = [hdr, ts];
+    for (const b of body){ if (pkt.length === BLE_MAX){ pkts.push(pkt); pkt = [hdr]; } pkt.push(b); }
+    if (pkt.length + 2 > BLE_MAX){ pkts.push(pkt); pkt = [hdr]; }
+    pkt.push(ts, 0xF7); pkts.push(pkt);
+    return pkts.map(p => new Uint8Array(p));
+  }
+  const pkt = [hdr];
+  while (ble.queue.length && ble.queue[0][0] !== 0xF0 && pkt.length + 1 + ble.queue[0].length <= BLE_MAX)
+    pkt.push(ts, ...ble.queue.shift());
+  return [new Uint8Array(pkt)];
+}
+
+// Incoming: undo BLE-MIDI framing. Message times come from the piano's 13-bit ms timestamps,
+// lined up so the packet's last message lands at its arrival time.
+const msgLen = s => s >= 0xF4 ? 1 : s === 0xF2 ? 3 : s >= 0xF1 ? 2 : (s & 0xE0) === 0xC0 ? 2 : 3;
+function onBleData(e){
+  const arrival = performance.now(), v = e.target.value;
+  const p = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+  if (p.length < 2 || !(p[0] & 0x80)) return;
+  const hi = p[0] & 0x3F, msgs = [];
+  let i = 1, hiAdd = 0, lastLo = -1, t = 0;
+  const stamp = lo => { if (lo < lastLo) hiAdd++; lastLo = lo; t = ((hi + hiAdd) << 7) | lo; };
+  while (i < p.length){
+    const b = p[i];
+    if (ble.sysex){
+      if (!(b & 0x80)){ ble.sysex.push(b); i++; continue; }
+      stamp(b & 0x7F); const s = p[i+1];
+      if (s === 0xF7){ ble.sysex.push(0xF7); msgs.push([ble.sysex, t]); ble.sysex = null; i += 2; continue; }
+      if (s >= 0xF8){ msgs.push([[s], t]); i += 2; continue; }
+      ble.sysex = null; continue;   // SysEx cut off by a new message: reread this timestamp below
+    }
+    if (b & 0x80){
+      stamp(b & 0x7F); i++;
+      const s = p[i];
+      if (s === undefined) break;
+      if (s & 0x80){
+        i++;
+        if (s === 0xF0){ ble.sysex = [0xF0]; continue; }
+        if (s < 0xF0) ble.running = s;
+        const n = msgLen(s) - 1; msgs.push([[s, ...p.slice(i, i+n)], t]); i += n; continue;
+      }
+    }
+    if (!ble.running){ i++; continue; }
+    const n = msgLen(ble.running) - 1; msgs.push([[ble.running, ...p.slice(i, i+n)], t]); i += n;
+  }
+  if (!msgs.length) return;
+  const last = msgs[msgs.length-1][1];
+  msgs.forEach(([d, ts]) => handleIn(Uint8Array.from(d), arrival - (last - ts)));
+}
+
+/* ---- Connect: USB (Web MIDI; also works for Bluetooth paired through Android's MIDI) ---- */
+let access = null, out = null, inp = null;
+$('#usbBtn').onclick = async () => {
+  if (!navigator.requestMIDIAccess){
+    setStatus('Web MIDI not available', 'err');
+    log('This browser has no Web MIDI. Open this page in Chrome.', 'bad'); return;
+  }
+  try {
+    access = await navigator.requestMIDIAccess({ sysex: true });
+  } catch(e){
+    setStatus('MIDI access refused', 'err');
+    log('Chrome refused MIDI access (' + e.name + '). Allow MIDI for this page in site settings and try again.', 'bad'); return;
+  }
+  if (ble.chr){ ble.manual = true; ble.device.gatt.disconnect(); }
+  log('MIDI access granted.', 'in');
+  $('#usbPorts').hidden = false;
+  access.onstatechange = e => { log('Device ' + e.port.state + ': ' + e.port.name); fillPorts(); };
+  out = null; fillPorts();
+};
+function closeUsb(){
+  if (!access) return;
+  access.onstatechange = null; if (inp) inp.onmidimessage = null;
+  out = inp = null; $('#usbPorts').hidden = true;
+  if (link && link.kind === 'midi') useLink(null);
 }
 function fillPorts(){
   const outs = [...access.outputs.values()], ins = [...access.inputs.values()];
@@ -166,91 +432,112 @@ function fillPorts(){
     if (best) sel.value = best.id;
   }
   selectPorts();
-  if (!outs.length){ setStatus('No MIDI devices found', 'err'); enableAll(false);
-    $('#connect').disabled = false; log('No MIDI outputs. Check the cable, or connect Bluetooth through a MIDI BLE app.', 'bad'); }
+  if (!outs.length){ setStatus('No MIDI devices found', 'err'); useLink(null);
+    log('No MIDI outputs. Check the cable, or use the Bluetooth button.', 'bad'); }
 }
 function selectPorts(){
   if (inp) inp.onmidimessage = null;
+  const prevOut = out;
   out = access.outputs.get($('#outSel').value) || null;
   inp = access.inputs.get($('#inSel').value) || null;
-  if (inp) inp.onmidimessage = onMessage;
-  if (out){
-    setStatus('Connected: ' + out.name, 'on'); enableAll(true);
-    send(sysexWrite(REG.connection, [1]));   // tell the piano an app is connected
-  }
+  if (inp) inp.onmidimessage = e => handleIn(e.data, e.timeStamp);
+  if (out && out !== prevOut)
+    useLink({ kind:'midi', name: out.name, send: (b, w) => w ? out.send(b, w) : out.send(b), clear: () => out.clear && out.clear() });
 }
-$('#connect').onclick = async () => {
-  if (!navigator.requestMIDIAccess){
-    setStatus('Web MIDI not available', 'err');
-    log('This browser has no Web MIDI. Open this file in Chrome.', 'bad'); return;
-  }
-  try {
-    access = await navigator.requestMIDIAccess({ sysex: true });
-  } catch(e){
-    setStatus('MIDI access refused', 'err');
-    log('Chrome refused MIDI access (' + e.name + '). Allow MIDI for this page in site settings and try again.', 'bad'); return;
-  }
-  log('MIDI access granted.', 'in');
-  access.onstatechange = e => { log('Device ' + e.port.state + ': ' + e.port.name); fillPorts(); };
-  fillPorts();
-};
 $('#outSel').onchange = selectPorts; $('#inSel').onchange = selectPorts;
 
 /* ---- Incoming ---- */
-function onMessage(e){
-  const d = e.data, st = d[0] & 0xF0;
+function handleIn(d, time){
+  const st = d[0] & 0xF0;
   if (d[0] === 0xFE || d[0] === 0xF8) return; // active sensing / clock
+  if (rec && d[0] >= 0x80 && d[0] < 0xF0) recAdd(time, Array.from(d));
   if (st === 0x90 && d[2] > 0) log('← key ' + noteName(d[1]) + '  velocity ' + d[2], 'in');
   else if (st === 0x80 || (st === 0x90 && d[2] === 0)) { /* note off, skip */ }
   else if (st === 0xB0) log('← control ' + d[1] + ' = ' + d[2] + (d[1]===64 ? ' (sustain pedal)' : ''), 'in');
   else if (d[0] === 0xF0) {
     log('← SysEx ' + hex(d), 'in');
-    if (d[1] === 0x41 && d[7] === 0x12){
-      const addr = [d[8],d[9],d[10],d[11]].join(','), data = Array.from(d.slice(12, d.length-2));
-      const name = REG_NAME[addr] || 'register ' + addr;
-      log('   piano reports ' + name + ' = ' + data.join(','), 'in');
-      if (name === 'masterVolume'){ $('#vol').value = data[0]; $('#volVal').textContent = data[0]; }
-    }
+    if (d[1] === 0x41 && d[7] === 0x12 && d.length >= 14) onDT1([d[8],d[9],d[10],d[11]], Array.from(d.slice(12, d.length-2)));
   } else log('← ' + hex(d), 'in');
 }
 
-/* ---- Note tests (scheduled with MIDI timestamps for even timing) ---- */
-const now = () => performance.now() + 30;
-function note(n, vel, t, dur){ send([0x90, n, vel], t); send([0x80, n, 0], t + dur); }
-function pedal(down, t){ send([0xB0, 64, down ? 127 : 0], t); }
+/* ---- Playback: one lookahead scheduler for tests, tone demos and takes, so Stop always works ----
+   events: [[ms from start, bytes | function]] */
+const sched = { events:[], i:0, t0:0, timer:null, fnTimers:[] };
+let playingBtn = null, playingLabel = '';
+function startPlay(events, btn){
+  if (btn && playingBtn === btn){ stopAll(); return; }
+  stopAll();
+  if (btn){ playingBtn = btn; playingLabel = btn.textContent; btn.textContent = 'Stop'; }
+  sched.events = events.sort((a,b) => a[0]-b[0]); sched.i = 0; sched.t0 = performance.now() + 60;
+  sched.timer = setInterval(pump, 25); pump();
+  keepAwake(true);
+}
+function pump(){
+  const now = performance.now(), horizon = now + 120;
+  while (sched.i < sched.events.length && sched.t0 + sched.events[sched.i][0] <= horizon){
+    const [t, b] = sched.events[sched.i++];
+    if (typeof b === 'function') sched.fnTimers.push(setTimeout(b, sched.t0 + t - now));
+    else send(b, sched.t0 + t);
+  }
+  const end = sched.events.length ? sched.events[sched.events.length-1][0] : 0;
+  if (sched.i >= sched.events.length && now > sched.t0 + end + 50) finishPlay();
+}
+function finishPlay(){
+  clearInterval(sched.timer); sched.timer = null;
+  sched.fnTimers.forEach(clearTimeout); sched.fnTimers = [];
+  if (playingBtn){ playingBtn.textContent = playingLabel; playingBtn = null; }
+  keepAwake(!!rec);
+}
+function stopAll(force){
+  const wasPlaying = !!sched.timer;
+  finishPlay();
+  if (!link || !(wasPlaying || force)) return;
+  link.clear();
+  for (let ch = 0; ch < 16; ch++){ send([0xB0|ch, 64, 0]); send([0xB0|ch, 123, 0]); }
+  if (force) log('→ All notes off');
+}
+
+let wake = null;
+async function keepAwake(on){
+  try {
+    if (on && !wake && navigator.wakeLock){ wake = await navigator.wakeLock.request('screen'); wake.onrelease = () => { wake = null; }; }
+    else if (!on && wake){ await wake.release(); wake = null; }
+  } catch(e){ /* not supported or not allowed: screen may sleep */ }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && (rec || sched.timer)) keepAwake(true); });
+
+/* ---- Note tests ---- */
+function note(ev, n, vel, t, dur){ ev.push([t, [0x90, n, vel]], [t + dur, [0x80, n, 0]]); }
 const TESTS = {
-  c(){ note(60, 80, now(), 800); log('→ Middle C, velocity 80'); },
-  scale(){ const t = now(); [60,62,64,65,67,69,71,72].forEach((n,i) => note(n, 80, t + i*300, 280)); log('→ C major scale'); },
-  dyn(){
-    const t = now(), steps = [['pp',20],['p',40],['mp',60],['mf',80],['f',100],['ff',124]];
-    steps.forEach(([m,v],i) => [48,60,64,67].forEach(n => note(n, v, t + i*700, 600)));
+  c(ev){ note(ev, 60, 80, 0, 800); log('→ Middle C, velocity 80'); },
+  scale(ev){ [60,62,64,65,67,69,71,72].forEach((n,i) => note(ev, n, 80, i*300, 280)); log('→ C major scale'); },
+  dyn(ev){
+    const steps = [['pp',20],['p',40],['mp',60],['mf',80],['f',100],['ff',124]];
+    steps.forEach(([m,v],i) => [48,60,64,67].forEach(n => note(ev, n, v, i*700, 600)));
     log('→ Chord at ' + steps.map(s => s[0] + '=' + s[1]).join(', '));
   },
-  pedal(){
-    const t = now(); pedal(true, t);
-    [48,55,60,64,67,72].forEach((n,i) => note(n, 70, t + i*120, 100));
-    pedal(false, t + 3500);
+  pedal(ev){
+    ev.push([0, [0xB0, 64, 127]]);
+    [48,55,60,64,67,72].forEach((n,i) => note(ev, n, 70, i*120, 100));
+    ev.push([3500, [0xB0, 64, 0]]);
     log('→ Arpeggio with pedal held 3.5 s. Notes should ring after the keys release.');
   },
-  ode(){
+  ode(ev){
     // Beethoven, Ode to Joy (public domain). [note, beats]; crescendo from p to f.
     const mel = [[64,1],[64,1],[65,1],[67,1],[67,1],[65,1],[64,1],[62,1],[60,1],[60,1],[62,1],[64,1],[64,1.5],[62,.5],[62,2]];
     const bass = [[48,4],[43,4],[48,4],[43,4]];
-    const beat = 500, t0 = now(); let t = t0;
-    mel.forEach(([n,b],i) => { const v = Math.round(40 + 60*i/(mel.length-1)); note(n, v, t, b*beat*0.92); t += b*beat; });
-    let tb = t0; bass.forEach(([n,b],i) => { note(n, 35 + i*12, tb, b*beat*0.95); tb += b*beat; });
+    const beat = 500; let t = 0;
+    mel.forEach(([n,b],i) => { const v = Math.round(40 + 60*i/(mel.length-1)); note(ev, n, v, t, b*beat*0.92); t += b*beat; });
+    let tb = 0; bass.forEach(([n,b],i) => { note(ev, n, 35 + i*12, tb, b*beat*0.95); tb += b*beat; });
     log('→ Ode to Joy, melody velocity 40 → 100');
-  },
-  stop(){
-    if (!out) return;
-    if (out.clear) out.clear();
-    for (let ch = 0; ch < 16; ch++){ send([0xB0|ch, 64, 0]); send([0xB0|ch, 123, 0]); }
-    log('→ All notes off');
   }
 };
-document.querySelectorAll('button[data-test]').forEach(b => b.onclick = () => TESTS[b.dataset.test]());
+document.querySelectorAll('button[data-test]').forEach(b => b.onclick = () => {
+  if (b.dataset.test === 'stop') return stopAll(true);
+  const ev = []; TESTS[b.dataset.test](ev); startPlay(ev, b);
+});
 
-/* ---- SysEx controls ---- */
+/* ---- Settings ---- */
 let volTimer;
 $('#vol').oninput = e => {
   $('#volVal').textContent = e.target.value;
@@ -258,11 +545,6 @@ $('#vol').oninput = e => {
   volTimer = setTimeout(() => send(sysexWrite(REG.masterVolume, [+e.target.value])), 120);
 };
 $('#readVol').onclick = () => send(sysexRead(REG.masterVolume, 1));
-toneSel.onchange = () => {
-  const [cat, idx] = TONES[+toneSel.value][1];
-  send(sysexWrite(REG.toneForSingle, [cat, 0, idx]));
-  log('   tone → ' + TONES[+toneSel.value][0]);
-};
 $('#bpm').onchange = e => {
   const v = Math.max(20, Math.min(250, +e.target.value || 80));
   send(sysexWrite(REG.sequencerTempoWO, [(v >> 7) & 0x7F, v & 0x7F]));
@@ -270,8 +552,117 @@ $('#bpm').onchange = e => {
 };
 $('#metro').onclick = () => send(sysexWrite(REG.metronomeSwToggle, [0]));
 
-window.addEventListener('pagehide', () => { if (out) TESTS.stop(); });
-log('Ready. Tap Connect.');
+/* ---- Recording ---- */
+const TAKES_KEY = 'fp10.takes';
+let takes = [];
+try { takes = JSON.parse(localStorage.getItem(TAKES_KEY)) || []; } catch(e){ takes = []; }
+function saveTakes(){
+  try { localStorage.setItem(TAKES_KEY, JSON.stringify(takes)); }
+  catch(e){ log('Could not store takes on this phone (' + e.name + '). Use Save .mid to keep them.', 'bad'); }
+}
+let rec = null;
+const isNoteOn = b => (b[0] & 0xF0) === 0x90 && b[2] > 0;
+function recAdd(time, bytes){ rec.events.push([time, bytes]); if (isNoteOn(bytes)) rec.notes++; }
+function recInfo(){
+  const ev = rec.events, dur = ev.length ? performance.now() - ev[0][0] : 0;
+  $('#recInfo').textContent = rec.notes ? 'Recording ' + fmt(dur) + ' · ' + rec.notes + ' notes' : 'Recording… start playing.';
+}
+$('#recBtn').onclick = () => rec ? stopRec() : startRec();
+function startRec(){
+  rec = { events:[], notes:0, date: Date.now(), tone: currentTone, timer: setInterval(recInfo, 500) };
+  const b = $('#recBtn'); b.textContent = '■ Stop recording'; b.classList.add('rec-on');
+  recInfo(); keepAwake(true); log('Recording started.', 'in');
+}
+function stopRec(){
+  const r = rec; rec = null; clearInterval(r.timer);
+  const b = $('#recBtn'); b.textContent = '● Record'; b.classList.remove('rec-on'); b.disabled = !link;
+  keepAwake(!!sched.timer);
+  if (!r.notes){ $('#recInfo').textContent = 'Nothing recorded: no keys were played.'; return; }
+  const ev = r.events.sort((a,b) => a[0]-b[0]), t0 = ev[0][0];
+  const events = ev.map(([t, b]) => [Math.round(t - t0), b]);
+  // Close anything still held when Stop was tapped, so the file never leaves a note hanging.
+  const held = new Map(), end = events[events.length-1][0] + 20;
+  for (const [, b] of events){
+    const st = b[0] & 0xF0, k = (b[0] & 15) + ',' + b[1];
+    if (isNoteOn(b)) held.set(k, b); else if (st === 0x80 || st === 0x90) held.delete(k);
+    if (st === 0xB0 && b[1] === 64) b[2] ? held.set('p' + (b[0] & 15), b) : held.delete('p' + (b[0] & 15));
+  }
+  held.forEach(b => events.push([end, (b[0] & 0xF0) === 0xB0 ? [b[0], 64, 0] : [0x80 | (b[0] & 15), b[1], 0]]));
+  const num = (takes.length ? takes[takes.length-1].num : 0) + 1;
+  takes.push({ num, name: 'Take ' + num, date: r.date, dur: end, notes: r.notes, tone: r.tone, events });
+  saveTakes(); renderTakes();
+  $('#recInfo').textContent = 'Saved Take ' + num + ' (' + fmt(end) + ', ' + r.notes + ' notes).';
+  log('Recording saved: Take ' + num, 'in');
+}
+
+const CAN_SHARE_MIDI = (() => { try { return !!navigator.canShare &&
+  navigator.canShare({ files:[new File([new Uint8Array(1)], 'x.mid', { type:'audio/midi' })] }); } catch(e){ return false; } })();
+function renderTakes(){
+  const box = $('#takes'); box.innerHTML = '';
+  if (!takes.length){ box.innerHTML = '<p class="note">No takes yet.</p>'; return; }
+  takes.slice().reverse().forEach(tk => {
+    const row = document.createElement('div'); row.className = 'take';
+    const info = document.createElement('div');
+    const title = document.createElement('strong'); title.textContent = tk.name;
+    const meta = document.createElement('span'); meta.className = 'note';
+    meta.textContent = '  ' + fmt(tk.dur) + ' · ' + tk.notes + ' notes · '
+      + new Date(tk.date).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })
+      + (TONES[tk.tone] ? ' · ' + TONES[tk.tone][0] : '');
+    info.append(title, meta);
+    const btns = document.createElement('div'); btns.className = 'row';
+    const mk = (label, fn, ghost, live) => {
+      const b = document.createElement('button'); b.textContent = label;
+      if (ghost) b.className = 'ghost';
+      if (live){ b.dataset.live = ''; b.disabled = !link; }
+      b.onclick = () => fn(b); btns.append(b);
+    };
+    mk('Play', b => playTake(tk, b), false, true);
+    mk('Save .mid', () => downloadTake(tk), true);
+    if (CAN_SHARE_MIDI) mk('Share', () => shareTake(tk), true);
+    mk('Delete', () => deleteTake(tk), true);
+    row.append(info, btns); box.append(row);
+  });
+}
+function playTake(tk, btn){
+  const ev = tk.events.map(([t, b]) => [t + 200, b]);
+  if (TONES[tk.tone]) ev.unshift([0, () => setTone(tk.tone)]);
+  startPlay(ev, btn);
+}
+function deleteTake(tk){
+  if (!confirm('Delete ' + tk.name + '?')) return;
+  if (playingBtn && playingBtn.closest('#takes')) stopAll();
+  takes = takes.filter(x => x !== tk); saveTakes(); renderTakes();
+}
+
+// Standard MIDI file, type 0. 500 ticks per beat at 120 BPM makes one tick one millisecond.
+function midiBytes(tk){
+  const vlq = n => { const a = [n & 0x7F]; while ((n >>= 7) > 0) a.unshift((n & 0x7F) | 0x80); return a; };
+  const name = Array.from(new TextEncoder().encode(tk.name));
+  const trk = [0, 0xFF,0x03, ...vlq(name.length), ...name, 0, 0xFF,0x51,0x03, 0x07,0xA1,0x20];
+  let last = 0;
+  for (const [t, b] of tk.events){ const tick = Math.max(last, t); trk.push(...vlq(tick - last), ...b); last = tick; }
+  trk.push(0, 0xFF,0x2F,0x00);
+  const u32 = n => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+  return new Uint8Array([0x4D,0x54,0x68,0x64, 0,0,0,6, 0,0, 0,1, 0x01,0xF4, 0x4D,0x54,0x72,0x6B, ...u32(trk.length), ...trk]);
+}
+function takeFile(tk){
+  const d = new Date(tk.date), p = n => String(n).padStart(2, '0');
+  const stamp = d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
+  return new File([midiBytes(tk)], 'fp10-' + stamp + '-take' + tk.num + '.mid', { type:'audio/midi' });
+}
+function downloadTake(tk){
+  const f = takeFile(tk), a = document.createElement('a');
+  a.href = URL.createObjectURL(f); a.download = f.name; document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+async function shareTake(tk){
+  try { await navigator.share({ files:[takeFile(tk)], title: tk.name }); }
+  catch(e){ if (e.name !== 'AbortError') log('Share failed: ' + e.message, 'bad'); }
+}
+renderTakes();
+
+window.addEventListener('pagehide', () => { if (rec) stopRec(); if (link) stopAll(true); });
+log('Ready. Tap Bluetooth or USB cable.');
 </script>
 </body>
 </html>
