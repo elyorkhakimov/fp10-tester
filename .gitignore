@@ -1,0 +1,8 @@
+.DS_Store
+# Android app: build output and the release signing key never go into this public repo
+android/.gradle/
+android/build/
+android/app/build/
+android/.kotlin/
+android/local.properties
+android/signing/

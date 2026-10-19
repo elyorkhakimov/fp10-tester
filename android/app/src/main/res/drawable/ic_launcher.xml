@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Three white keys with two black keys, on the page's ink colour. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
+    <path android:fillColor="#1c1b19" android:pathData="M12,0h40a12,12 0 0 1 12,12v40a12,12 0 0 1 -12,12h-40a12,12 0 0 1 -12,-12v-40a12,12 0 0 1 12,-12z" />
+    <path android:fillColor="#fffdf8" android:pathData="M11,12h13v40h-11a2,2 0 0 1 -2,-2z" />
+    <path android:fillColor="#fffdf8" android:pathData="M25.5,12h13v40h-13z" />
+    <path android:fillColor="#fffdf8" android:pathData="M40,12h13v38a2,2 0 0 1 -2,2h-11z" />
+    <path android:fillColor="#1c1b19" android:pathData="M20,12h9v24h-9z" />
+    <path android:fillColor="#1c1b19" android:pathData="M35,12h9v24h-9z" />
+    <path android:fillColor="#b3261e" android:pathData="M11,10h42v3h-42z" />
+</vector>

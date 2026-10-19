@@ -72,7 +72,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
       <span id="status" class="pill">Not connected</span>
     </div>
     <p id="connMsg" class="note bad" hidden style="margin-top:8px"></p>
-    <p class="note" style="margin-top:8px">Bluetooth needs Chrome (Brave and Firefox block it). Turn the piano on, tap Bluetooth and pick FP-10 from the list. No other app is needed.
+    <p id="connHelp" class="note" style="margin-top:8px">Bluetooth needs Chrome (Brave and Firefox block it). Turn the piano on, tap Bluetooth and pick FP-10 from the list. No other app is needed.
       If the piano isn't listed, close the Roland Piano App or any MIDI BLE app, because the piano accepts only one Bluetooth connection at a time.
       If it still isn't listed, Forget FP-10 in Android's Bluetooth settings and try again.</p>
     <div id="usbPorts" class="row" hidden style="margin-top:10px">
@@ -460,9 +460,78 @@ function onBleData(e){
   msgs.forEach(([d, ts]) => handleIn(Uint8Array.from(d), arrival - (last - ts)));
 }
 
+/* ---- In the Android app (android/): the app opens the piano through Android's MIDI service, over USB or
+   Bluetooth, and stands in for Web MIDI here, so the USB code below runs unchanged. ---- */
+const NATIVE = window.FP10Native || null;
+function nativeMIDIAccess(){
+  const access = { inputs:new Map(), outputs:new Map(), sysexEnabled:true, onstatechange:null };
+  let input = null, serial = 0;
+  // Android hands over byte chunks; split them into whole messages (SysEx may span chunks).
+  const frame = midiFramer((bytes, t) => input && input.onmidimessage && input.onmidimessage({ data: Uint8Array.from(bytes), timeStamp: t }));
+  const timers = new Set();
+  const setState = (connected, name) => {
+    for (const p of [...access.inputs.values(), ...access.outputs.values()]) p.state = 'disconnected';
+    access.inputs.clear(); access.outputs.clear(); input = null;
+    if (connected){
+      serial++;
+      input = { id:'native-in-' + serial, name, state:'connected', onmidimessage:null };
+      const output = { id:'native-out-' + serial, name, state:'connected',
+        send(b, when){
+          const csv = Array.from(b).join(','), delay = when ? when - performance.now() : 0;
+          if (delay > 4){ const id = setTimeout(() => { timers.delete(id); if (output.state === 'connected') NATIVE.send(csv); }, delay); timers.add(id); }
+          else NATIVE.send(csv);
+        },
+        clear(){ timers.forEach(clearTimeout); timers.clear(); } };
+      access.inputs.set(input.id, input); access.outputs.set(output.id, output);
+    }
+    access.onstatechange && access.onstatechange({ port:{ state: connected ? 'connected' : 'disconnected', name: name || 'piano' } });
+  };
+  window.__fp10 = {
+    midi(batch){
+      const now = performance.now(), nowNs = NATIVE.nowNs();
+      batch.forEach(([bytes, ns]) => frame(bytes, now - (nowNs - ns) / 1e6));
+    },
+    state(connected, name, message){
+      if (connected !== !!input) setState(connected, name);
+      if (message){ log(message, connected ? 'in' : 'out'); if (!connected) setStatus(message, /not|could|fail|off|refused|busy|no /i.test(message) ? 'err' : ''); }
+    }
+  };
+  return access;
+}
+function midiFramer(emit){
+  let msg = [], need = 0, running = 0, sysex = null;
+  return (bytes, t) => {
+    for (const b of bytes){
+      if (b >= 0xF8){ emit([b], t); continue; }           // real-time bytes may appear anywhere
+      if (sysex){
+        if (b < 0x80){ sysex.push(b); continue; }
+        if (b === 0xF7){ sysex.push(b); emit(sysex, t); sysex = null; continue; }
+        sysex = null;                                      // cut off by a new status byte
+      }
+      if (b === 0xF0){ sysex = [b]; msg = []; running = 0; continue; }
+      if (b === 0xF7) continue;
+      if (b >= 0x80){
+        running = b < 0xF0 ? b : 0; msg = [b]; need = msgLen(b) - 1;
+        if (!need){ emit(msg, t); msg = []; }
+        continue;
+      }
+      if (!msg.length){ if (!running) continue; msg = [running]; need = msgLen(running) - 1; }
+      msg.push(b);
+      if (--need === 0){ emit(msg, t); msg = []; }
+    }
+  };
+}
+
 /* ---- Connect: USB (Web MIDI; also works for Bluetooth paired through Android's MIDI) ---- */
 let access = null, out = null, inp = null;
 $('#usbBtn').onclick = async () => {
+  if (NATIVE){
+    if (!access){
+      access = nativeMIDIAccess();
+      access.onstatechange = e => { log('Device ' + e.port.state + ': ' + e.port.name); fillPorts(); };
+    }
+    connMsg(''); NATIVE.connect(); return;
+  }
   if (!navigator.requestMIDIAccess){
     setStatus('Web MIDI not available', 'err');
     log('This browser has no Web MIDI. Open this page in Chrome.', 'bad'); return;
@@ -723,6 +792,14 @@ function takeFile(tk){
   return new File([midiBytes(tk)], 'fp10-' + stamp + '-take' + tk.num + '.mid', { type:'audio/midi' });
 }
 function downloadTake(tk){
+  if (NATIVE){
+    // The app's WebView can't download blobs: hand the bytes to the app, which saves to Download/FP-10.
+    const bytes = midiBytes(tk); let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    const where = NATIVE.saveFile(takeFile(tk).name, 'audio/midi', btoa(bin));
+    log(where.startsWith('error') ? 'Save failed: ' + where : 'Saved to ' + where, where.startsWith('error') ? 'bad' : 'in');
+    return;
+  }
   const f = takeFile(tk), a = document.createElement('a');
   a.href = URL.createObjectURL(f); a.download = f.name; document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
@@ -734,7 +811,15 @@ async function shareTake(tk){
 renderTakes();
 
 window.addEventListener('pagehide', () => { if (rec) stopRec(); if (link) stopAll(true); });
-log('Ready. Tap Bluetooth or USB / MIDI app.');
+if (NATIVE){
+  // One button: the app finds the piano on USB, else over Bluetooth.
+  $('#bleBtn').hidden = true;
+  $('#usbBtn').textContent = 'Connect piano'; $('#usbBtn').className = '';
+  $('#connHelp').textContent = 'The app connects over USB if the cable is in, otherwise over Bluetooth. '
+    + 'Turn the piano on first. If it isn\'t found, close the Roland Piano App or any other app connected to it.';
+  log('FP-10 app ' + NATIVE.version() + '. Connecting…');
+  $('#usbBtn').click();
+} else log('Ready. Tap Bluetooth or USB / MIDI app.');
 </script>
 </body>
 </html>
