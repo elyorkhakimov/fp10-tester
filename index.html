@@ -184,7 +184,11 @@ async function initPiano(){
     sysexRead([1,0,1,0], 128), sysexRead([1,0,2,0], 128), 500
   ];
   for (const s of steps){ if (!link) return; typeof s === 'number' ? await sleep(s) : send(s); }
-  log('Piano ready.', 'in');
+  if (link.kind === 'ble' && !ble.rx){
+    connMsg('Connected, but the piano is not sending anything back over Bluetooth, so recording and tone sync cannot work. Please copy the MIDI log below and send it.');
+    return;
+  }
+  log('Piano ready.' + (link.kind === 'ble' ? ' Received ' + ble.rx + ' Bluetooth packets.' : ''), 'in');
 }
 
 /* Piano state, filled from DT1 messages. Bulk replies cover many registers, so store each byte by address. */
@@ -253,7 +257,11 @@ function setTone(i, fromPiano){
    tone change the piano reports it as bank select + program change, so we learn tone → program from those
    reports and send the program back. [CC0, CC32, program] */
 const PROG_KEY = 'fp10.progMap';
-let progMap = { 0:[0,68,0], 1:[16,67,0], 2:[4,64,0], 35:[0,66,53] };   // seen in a log from this FP-10
+// The 15 front-panel tones, from Roland's FP-10 MIDI Implementation (its 1-based PC minus 1). Thum Voice was
+// seen in a log from this piano. The other app-only tones aren't documented; they are learned on first use.
+let progMap = {
+  0:[0,68,0], 1:[16,67,0], 2:[4,64,0], 3:[8,66,1], 5:[0,66,6], 6:[8,66,6], 7:[16,67,4], 8:[0,70,5], 11:[0,0,11],
+  14:[0,71,49], 15:[0,64,48], 17:[0,70,18], 19:[0,66,19], 23:[0,65,54], 26:[0,64,89], 35:[0,66,53] };
 try { Object.assign(progMap, JSON.parse(localStorage.getItem(PROG_KEY))); } catch(e){}
 let inProg = [0,0,0], lastProg = null, sentProg = null, pendingTone = null, pendingTimer;
 function sendProg(p){
@@ -335,10 +343,12 @@ async function openBle(){
   try {
     const server = await ble.device.gatt.connect();
     const chr = await (await server.getPrimaryService(BLE_SVC)).getCharacteristic(BLE_CHR);
+    // BLE-MIDI asks the app to read the characteristic once before notifications; Roland's app does too.
+    try { await chr.readValue(); } catch(e){ log('Bluetooth: first read failed (' + e.message + '), continuing.'); }
     chr.removeEventListener('characteristicvaluechanged', onBleData);
     chr.addEventListener('characteristicvaluechanged', onBleData);
     await chr.startNotifications();
-    ble.chr = chr; ble.sysex = null; ble.running = 0;
+    ble.chr = chr; ble.sysex = null; ble.running = 0; ble.rx = 0;
   } catch(e){
     setStatus('Bluetooth failed', 'err'); connMsg('Bluetooth connect failed: ' + e.message); return false;
   }
@@ -403,6 +413,7 @@ const msgLen = s => s >= 0xF4 ? 1 : s === 0xF2 ? 3 : s >= 0xF1 ? 2 : (s & 0xE0) 
 function onBleData(e){
   const arrival = performance.now(), v = e.target.value;
   const p = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+  if (++ble.rx <= 5) log('← Bluetooth packet ' + hex(p));
   if (p.length < 2 || !(p[0] & 0x80)) return;
   const hi = p[0] & 0x3F, msgs = [];
   let i = 1, hiAdd = 0, lastLo = -1, t = 0;
