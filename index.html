@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>FP-10 MIDI Tester</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Public+Sans:wght@400;600&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+/* Layout: one narrow column of panels, ebony/ivory like the piano, one red accent for "live". */
+:root{
+  --bg:#f3f1ec; --panel:#fffdf8; --ink:#1c1b19; --muted:#6d6a62; --line:#dcd7cb;
+  --accent:#b3261e; --ok:#2e7d4f; --key:#1c1b19; --keyfg:#fffdf8;
+  --display:"Fraunces",Georgia,serif; --body:"Public Sans",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#141413; --panel:#1e1d1b; --ink:#ece8df; --muted:#9e998e; --line:#34322e;
+  --accent:#e5534b; --ok:#5cbf86; --key:#ece8df; --keyfg:#141413; color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--body);
+  padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) 40px max(16px,env(safe-area-inset-left))}
+main{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+h1{font:600 28px/1.1 var(--display);margin:4px 0 0;text-wrap:balance}
+h2{font:600 12px var(--body);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+p{margin:0}
+.sub{color:var(--muted)}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button{font:600 14px var(--body);background:var(--key);color:var(--keyfg);border:0;border-radius:6px;
+  padding:10px 14px;min-height:42px;cursor:pointer}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+button:disabled{opacity:.35;cursor:default}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+select,input[type=number]{font:14px var(--body);background:var(--bg);color:var(--ink);border:1px solid var(--line);
+  border-radius:6px;padding:9px;min-height:42px;max-width:100%}
+label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted);flex:1 1 140px;min-width:0}
+input[type=range]{width:100%;accent-color:var(--accent)}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:3px 10px;border-radius:99px;border:1px solid var(--line)}
+.pill::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.pill.on::before{background:var(--ok)} .pill.err::before{background:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+#log{font:12px/1.5 var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:6px;
+  padding:8px;height:200px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin-top:8px}
+.in{color:var(--ok)} .out{color:var(--muted)} .bad{color:var(--accent)}
+.note{font-size:13px;color:var(--muted)}
+ol{margin:0;padding-left:20px} li{margin:2px 0}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>FP-10 MIDI Tester</h1>
+    <p class="sub">Checks that this phone can play notes on the Roland FP-10 and change its settings.</p>
+  </header>
+
+  <section>
+    <h2>1 · Connect</h2>
+    <ol class="note">
+      <li>USB: phone USB-C → FP-10 "Computer" port (USB-B). Or Bluetooth: connect the piano with a MIDI BLE app first.</li>
+      <li>Tap Connect and allow MIDI access when Chrome asks.</li>
+    </ol>
+    <div class="row" style="margin-top:10px">
+      <button id="connect">Connect</button>
+      <span id="status" class="pill">Not connected</span>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label>Send to<select id="outSel" disabled></select></label>
+      <label>Listen to<select id="inSel" disabled></select></label>
+    </div>
+  </section>
+
+  <section>
+    <h2>2 · Play notes</h2>
+    <div class="grid">
+      <button data-test="c" disabled>Middle C</button>
+      <button data-test="scale" disabled>C major scale</button>
+      <button data-test="dyn" disabled>Dynamics pp → ff</button>
+      <button data-test="pedal" disabled>Sustain pedal</button>
+      <button data-test="ode" disabled>Ode to Joy, with crescendo</button>
+      <button data-test="stop" class="ghost" disabled>Stop all notes</button>
+    </div>
+    <p class="note" style="margin-top:8px">Dynamics plays the same chord six times, each louder. You should hear clear steps.</p>
+  </section>
+
+  <section>
+    <h2>3 · Piano settings (Roland SysEx)</h2>
+    <div class="row">
+      <label>Volume <span id="volVal">50</span><input id="vol" type="range" min="0" max="100" value="50" disabled></label>
+      <button id="readVol" class="ghost" disabled>Read volume back</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label>Tone<select id="tone" disabled></select></label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label>Tempo (BPM)<input id="bpm" type="number" min="20" max="250" value="80" disabled></label>
+      <button id="metro" disabled>Metronome on/off</button>
+    </div>
+    <p class="note" style="margin-top:8px">If the piano answers "Read volume back", two-way SysEx works and an app can both set and check settings.</p>
+  </section>
+
+  <section>
+    <h2>4 · MIDI log</h2>
+    <p class="note">Play keys on the piano: they should show up here as incoming notes.</p>
+    <div id="log" aria-live="polite"></div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const logEl = $('#log');
+function log(msg, cls='out'){
+  const d = document.createElement('div'); d.className = cls; d.textContent = msg;
+  logEl.appendChild(d); logEl.scrollTop = logEl.scrollHeight;
+  while (logEl.childNodes.length > 300) logEl.removeChild(logEl.firstChild);
+}
+const hex = a => Array.from(a, b => b.toString(16).padStart(2,'0')).join(' ');
+const NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const noteName = n => NAMES[n%12] + (Math.floor(n/12)-1);
+
+let access = null, out = null, inp = null;
+
+/* ---- Roland SysEx, ported from evanraalte/RolandPiano ---- */
+const ROLAND_ID = [0x41,0x10,0x00,0x00,0x00,0x28];
+const REG = {
+  masterVolume:[1,0,2,0x13], toneForSingle:[1,0,2,7], connection:[1,0,3,6],
+  sequencerTempoWO:[1,0,3,9], metronomeSwToggle:[1,0,5,9], metronomeStatus:[1,0,1,0x0F]
+};
+const REG_NAME = Object.fromEntries(Object.entries(REG).map(([k,v]) => [v.join(','), k]));
+const checksum = bytes => (128 - (bytes.reduce((a,b)=>a+b,0) % 128)) & 0x7F;
+function sysexWrite(addr, data){
+  return [0xF0, ...ROLAND_ID, 0x12, ...addr, ...data, checksum([...addr, ...data]), 0xF7];
+}
+function sysexRead(addr, size){
+  const sz = [0,0,0,size];
+  return [0xF0, ...ROLAND_ID, 0x11, ...addr, ...sz, checksum([...addr, ...sz]), 0xF7];
+}
+function send(bytes, when){
+  if (!out) return;
+  try { when ? out.send(bytes, when) : out.send(bytes); }
+  catch(e){ log('Send failed: ' + e.message, 'bad'); return; }
+  if (bytes[0] === 0xF0) log('→ SysEx ' + hex(bytes));
+}
+const TONES = [
+  ['Grand Piano 1',[0,0]],['Grand Piano 2',[0,1]],['Grand Piano 3',[0,2]],['Grand Piano 4',[0,3]],
+  ['Ragtime Piano',[0,4]],['Harpsichord 1',[0,5]],['Harpsichord 2',[0,6]],
+  ['E. Piano 1',[1,0]],['E. Piano 2',[1,1]],['E. Piano 3',[1,2]],['Clav',[1,3]],['Vibraphone',[1,4]],['Celesta',[1,5]],
+  ['Strings 1',[2,0]],['Strings 2',[2,1]],['Harp',[2,2]],['Jazz Organ 1',[2,3]],['Church Organ 1',[2,5]],['Choir 1',[2,8]]
+];
+const toneSel = $('#tone');
+TONES.forEach(([name,[cat,idx]],i) => { const o = new Option(name, i); toneSel.add(o); });
+
+/* ---- Connect ---- */
+function setStatus(text, cls){ const s = $('#status'); s.textContent = text; s.className = 'pill ' + (cls||''); }
+function enableAll(on){
+  document.querySelectorAll('button[data-test], #vol, #readVol, #tone, #bpm, #metro, #outSel, #inSel')
+    .forEach(el => el.disabled = !on);
+}
+function fillPorts(){
+  const outs = [...access.outputs.values()], ins = [...access.inputs.values()];
+  const pick = list => list.find(p => /roland|fp-?10|digital piano/i.test(p.name)) || list[0];
+  for (const [sel, list] of [[$('#outSel'), outs], [$('#inSel'), ins]]){
+    const prev = sel.value; sel.innerHTML = '';
+    list.forEach(p => sel.add(new Option(p.name, p.id)));
+    const best = list.find(p => p.id === prev) || pick(list);
+    if (best) sel.value = best.id;
+  }
+  selectPorts();
+  if (!outs.length){ setStatus('No MIDI devices found', 'err'); enableAll(false);
+    $('#connect').disabled = false; log('No MIDI outputs. Check the cable, or connect Bluetooth through a MIDI BLE app.', 'bad'); }
+}
+function selectPorts(){
+  if (inp) inp.onmidimessage = null;
+  out = access.outputs.get($('#outSel').value) || null;
+  inp = access.inputs.get($('#inSel').value) || null;
+  if (inp) inp.onmidimessage = onMessage;
+  if (out){
+    setStatus('Connected: ' + out.name, 'on'); enableAll(true);
+    send(sysexWrite(REG.connection, [1]));   // tell the piano an app is connected
+  }
+}
+$('#connect').onclick = async () => {
+  if (!navigator.requestMIDIAccess){
+    setStatus('Web MIDI not available', 'err');
+    log('This browser has no Web MIDI. Open this file in Chrome.', 'bad'); return;
+  }
+  try {
+    access = await navigator.requestMIDIAccess({ sysex: true });
+  } catch(e){
+    setStatus('MIDI access refused', 'err');
+    log('Chrome refused MIDI access (' + e.name + '). Allow MIDI for this page in site settings and try again.', 'bad'); return;
+  }
+  log('MIDI access granted.', 'in');
+  access.onstatechange = e => { log('Device ' + e.port.state + ': ' + e.port.name); fillPorts(); };
+  fillPorts();
+};
+$('#outSel').onchange = selectPorts; $('#inSel').onchange = selectPorts;
+
+/* ---- Incoming ---- */
+function onMessage(e){
+  const d = e.data, st = d[0] & 0xF0;
+  if (d[0] === 0xFE || d[0] === 0xF8) return; // active sensing / clock
+  if (st === 0x90 && d[2] > 0) log('← key ' + noteName(d[1]) + '  velocity ' + d[2], 'in');
+  else if (st === 0x80 || (st === 0x90 && d[2] === 0)) { /* note off, skip */ }
+  else if (st === 0xB0) log('← control ' + d[1] + ' = ' + d[2] + (d[1]===64 ? ' (sustain pedal)' : ''), 'in');
+  else if (d[0] === 0xF0) {
+    log('← SysEx ' + hex(d), 'in');
+    if (d[1] === 0x41 && d[7] === 0x12){
+      const addr = [d[8],d[9],d[10],d[11]].join(','), data = Array.from(d.slice(12, d.length-2));
+      const name = REG_NAME[addr] || 'register ' + addr;
+      log('   piano reports ' + name + ' = ' + data.join(','), 'in');
+      if (name === 'masterVolume'){ $('#vol').value = data[0]; $('#volVal').textContent = data[0]; }
+    }
+  } else log('← ' + hex(d), 'in');
+}
+
+/* ---- Note tests (scheduled with MIDI timestamps for even timing) ---- */
+const now = () => performance.now() + 30;
+function note(n, vel, t, dur){ send([0x90, n, vel], t); send([0x80, n, 0], t + dur); }
+function pedal(down, t){ send([0xB0, 64, down ? 127 : 0], t); }
+const TESTS = {
+  c(){ note(60, 80, now(), 800); log('→ Middle C, velocity 80'); },
+  scale(){ const t = now(); [60,62,64,65,67,69,71,72].forEach((n,i) => note(n, 80, t + i*300, 280)); log('→ C major scale'); },
+  dyn(){
+    const t = now(), steps = [['pp',20],['p',40],['mp',60],['mf',80],['f',100],['ff',124]];
+    steps.forEach(([m,v],i) => [48,60,64,67].forEach(n => note(n, v, t + i*700, 600)));
+    log('→ Chord at ' + steps.map(s => s[0] + '=' + s[1]).join(', '));
+  },
+  pedal(){
+    const t = now(); pedal(true, t);
+    [48,55,60,64,67,72].forEach((n,i) => note(n, 70, t + i*120, 100));
+    pedal(false, t + 3500);
+    log('→ Arpeggio with pedal held 3.5 s. Notes should ring after the keys release.');
+  },
+  ode(){
+    // Beethoven, Ode to Joy (public domain). [note, beats]; crescendo from p to f.
+    const mel = [[64,1],[64,1],[65,1],[67,1],[67,1],[65,1],[64,1],[62,1],[60,1],[60,1],[62,1],[64,1],[64,1.5],[62,.5],[62,2]];
+    const bass = [[48,4],[43,4],[48,4],[43,4]];
+    const beat = 500, t0 = now(); let t = t0;
+    mel.forEach(([n,b],i) => { const v = Math.round(40 + 60*i/(mel.length-1)); note(n, v, t, b*beat*0.92); t += b*beat; });
+    let tb = t0; bass.forEach(([n,b],i) => { note(n, 35 + i*12, tb, b*beat*0.95); tb += b*beat; });
+    log('→ Ode to Joy, melody velocity 40 → 100');
+  },
+  stop(){
+    if (!out) return;
+    if (out.clear) out.clear();
+    for (let ch = 0; ch < 16; ch++){ send([0xB0|ch, 64, 0]); send([0xB0|ch, 123, 0]); }
+    log('→ All notes off');
+  }
+};
+document.querySelectorAll('button[data-test]').forEach(b => b.onclick = () => TESTS[b.dataset.test]());
+
+/* ---- SysEx controls ---- */
+let volTimer;
+$('#vol').oninput = e => {
+  $('#volVal').textContent = e.target.value;
+  clearTimeout(volTimer);
+  volTimer = setTimeout(() => send(sysexWrite(REG.masterVolume, [+e.target.value])), 120);
+};
+$('#readVol').onclick = () => send(sysexRead(REG.masterVolume, 1));
+toneSel.onchange = () => {
+  const [cat, idx] = TONES[+toneSel.value][1];
+  send(sysexWrite(REG.toneForSingle, [cat, 0, idx]));
+  log('   tone → ' + TONES[+toneSel.value][0]);
+};
+$('#bpm').onchange = e => {
+  const v = Math.max(20, Math.min(250, +e.target.value || 80));
+  send(sysexWrite(REG.sequencerTempoWO, [(v >> 7) & 0x7F, v & 0x7F]));
+  log('   tempo → ' + v + ' BPM');
+};
+$('#metro').onclick = () => send(sysexWrite(REG.metronomeSwToggle, [0]));
+
+window.addEventListener('pagehide', () => { if (out) TESTS.stop(); });
+log('Ready. Tap Connect.');
+</script>
+</body>
+</html>
