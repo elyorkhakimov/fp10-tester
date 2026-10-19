@@ -51,6 +51,10 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .take:first-child{border-top:0}
 .take button{min-height:38px;padding:8px 12px}
 #takes{margin-top:10px}
+label.filebtn{flex:0 0 auto;flex-direction:row;align-items:center;font:600 14px var(--body);background:var(--key);color:var(--keyfg);
+  border-radius:6px;padding:10px 14px;min-height:42px;cursor:pointer;position:relative}
+label.filebtn input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+label.filebtn:focus-within{outline:2px solid var(--accent);outline-offset:2px}
 #log{font:12px/1.5 var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:6px;
   padding:8px;height:200px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin-top:8px}
 .in{color:var(--ok)} .out{color:var(--muted)} .bad{color:var(--accent)}
@@ -82,7 +86,25 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   </section>
 
   <section>
-    <h2>2 · Tones · <span id="toneNow">unknown</span></h2>
+    <h2>2 · Score player</h2>
+    <div class="row">
+      <label class="filebtn">Open MusicXML…<input type="file" id="scoreFile"></label>
+      <button id="sampleScore" class="ghost">Try a sample</button>
+    </div>
+    <p id="scoreInfo" class="note" style="margin-top:8px">Open a .musicxml or .mxl file (MuseScore and most notation apps can export one).</p>
+    <div class="row" style="margin-top:10px">
+      <label>Hands<select id="hands"><option value="both">Both</option><option value="R">Right only</option><option value="L">Left only</option></select></label>
+      <label>Speed <span id="speedVal">100</span>%<input id="speed" type="range" min="25" max="150" step="5" value="100"></label>
+      <label>Start at measure<input id="fromMeasure" type="number" min="1" value="1"></label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="playScore" data-live disabled>Play score</button>
+      <span id="scorePos" class="note"></span>
+    </div>
+  </section>
+
+  <section>
+    <h2>3 · Tones · <span id="toneNow">unknown</span></h2>
     <div id="tones"></div>
     <div class="row" style="margin-top:12px">
       <label class="check"><input type="checkbox" id="demoOnTap" checked> Play a short demo when I tap a tone</label>
@@ -93,7 +115,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   </section>
 
   <section>
-    <h2>3 · Record</h2>
+    <h2>4 · Record</h2>
     <div class="row">
       <button id="recBtn" data-live disabled>● Record</button>
       <span id="recInfo" class="note">Records the keys, how hard you play them and the pedal.</span>
@@ -104,7 +126,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   </section>
 
   <section>
-    <h2>4 · Piano settings</h2>
+    <h2>5 · Piano settings</h2>
     <div class="row">
       <label>Volume <span id="volVal">50</span><input id="vol" type="range" min="0" max="100" value="50" data-live disabled></label>
       <button id="readVol" class="ghost" data-live disabled>Read volume back</button>
@@ -116,7 +138,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   </section>
 
   <section>
-    <h2>5 · Play notes</h2>
+    <h2>6 · Play notes</h2>
     <div class="grid">
       <button data-test="c" data-live disabled>Middle C</button>
       <button data-test="scale" data-live disabled>C major scale</button>
@@ -129,7 +151,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   </section>
 
   <section>
-    <h2>6 · MIDI log</h2>
+    <h2>7 · MIDI log</h2>
     <p class="note">Play keys on the piano: they should show up here as incoming notes.</p>
     <div id="log" aria-live="polite"></div>
   </section>
@@ -689,6 +711,203 @@ $('#bpm').onchange = e => {
   log('   tempo → ' + v + ' BPM');
 };
 $('#metro').onclick = () => send(sysexWrite(REG.metronomeSwToggle, [0]));
+
+/* ---- Score player: MusicXML → notes on the piano. Stage 1: notes, ties, chords, both staves,
+   tempo marks and dynamics; hands separate, speed, start measure. Repeats aren't followed yet. ---- */
+const DYN_VEL = { pppp:20, ppp:28, pp:38, p:50, mp:62, mf:76, f:90, ff:104, fff:116, ffff:124 };
+const STEP = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
+const UNIT_Q = { whole:4, half:2, quarter:1, eighth:0.5, '16th':0.25 };
+// Plain DOM walking (no querySelector), so the parser also runs in Node tests.
+const kids = (el, name) => { const r = []; for (let c = el && el.firstChild; c; c = c.nextSibling) if (c.nodeType === 1 && (!name || c.nodeName === name)) r.push(c); return r; };
+const kid = (el, name) => kids(el, name)[0] || null;
+const txt = (el, name, d) => { const k = el && kid(el, name); return k ? k.textContent.trim() : d; };
+const num = (el, name, d) => { const v = parseFloat(txt(el, name, '')); return isNaN(v) ? d : v; };
+
+function parseScore(xmlText){
+  const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+  const root = doc.documentElement;
+  if (!root || doc.getElementsByTagName('parsererror').length) throw new Error('This file is not valid MusicXML.');
+  if (root.nodeName === 'score-timewise') throw new Error('This is "timewise" MusicXML, which isn\'t supported. Export it again as normal (partwise) MusicXML.');
+  if (root.nodeName !== 'score-partwise') throw new Error('This file is not a MusicXML score.');
+  const parts = kids(root, 'part');
+  if (!parts.length) throw new Error('The score has no parts.');
+  const title = txt(kid(root, 'work'), 'work-title', '') || txt(root, 'movement-title', '');
+  const notes = [], tempos = [], dyns = [], measures = [];
+
+  parts.forEach((part, pi) => {
+    let staves = 1;
+    const st = part.getElementsByTagName('staves');
+    for (let i = 0; i < st.length; i++) staves = Math.max(staves, parseInt(st[i].textContent) || 1);
+    // Piano: staff 1 = right hand, 2 = left. Several one-staff parts: upper half right, lower half left.
+    const hand = staff => staves >= 2 ? (staff >= 2 ? 'L' : 'R') : (pi < Math.ceil(parts.length / 2) ? 'R' : 'L');
+    const tempoOf = el => {
+      const snd = kid(el, 'sound');
+      if (snd && snd.getAttribute('tempo')) return parseFloat(snd.getAttribute('tempo'));
+      for (const dt of kids(el, 'direction-type')){
+        const met = kid(dt, 'metronome'), unit = met && UNIT_Q[txt(met, 'beat-unit', '')];
+        if (unit && num(met, 'per-minute', 0)) return num(met, 'per-minute', 0) * unit * (kid(met, 'beat-unit-dot') ? 1.5 : 1);
+      }
+      return 0;
+    };
+    let div = 1, q = 0;
+    kids(part, 'measure').forEach((m, mi) => {
+      if (pi === 0) measures.push({ q, number: m.getAttribute('number') || String(mi + 1) });
+      let pos = 0, maxPos = 0, lastStart = 0;
+      for (const el of kids(m)){
+        if (el.nodeName === 'attributes') div = num(el, 'divisions', div);
+        else if (el.nodeName === 'backup') pos -= num(el, 'duration', 0) / div;
+        else if (el.nodeName === 'forward') pos += num(el, 'duration', 0) / div;
+        else if (el.nodeName === 'sound' && el.getAttribute('tempo')) tempos.push({ q: q + pos, bpm: parseFloat(el.getAttribute('tempo')) });
+        else if (el.nodeName === 'direction'){
+          const at = q + pos + num(el, 'offset', 0) / div, bpm = tempoOf(el);
+          if (bpm > 0) tempos.push({ q: at, bpm });
+          for (const dt of kids(el, 'direction-type')){
+            const d = kid(dt, 'dynamics'), mark = d && kids(d).map(x => x.nodeName).find(n => DYN_VEL[n]);
+            if (mark) dyns.push({ q: at, part: pi, staff: num(el, 'staff', 0), vel: DYN_VEL[mark] });
+          }
+        } else if (el.nodeName === 'note'){
+          if (kid(el, 'grace') || kid(el, 'cue')) continue;
+          const d = num(el, 'duration', 0) / div, chord = !!kid(el, 'chord');
+          const start = chord ? lastStart : pos;
+          if (!chord){ lastStart = pos; pos += d; }
+          const p = kid(el, 'pitch');
+          if (p){
+            const ties = kids(el, 'tie').map(t => t.getAttribute('type')), staff = num(el, 'staff', 1);
+            notes.push({ q: q + start, dur: d, midi: (num(p, 'octave', 4) + 1) * 12 + (STEP[txt(p, 'step', 'C')] || 0) + Math.round(num(p, 'alter', 0)),
+              part: pi, staff, hand: hand(staff), tieStart: ties.includes('start'), tieStop: ties.includes('stop') });
+          }
+        }
+        maxPos = Math.max(maxPos, pos);
+      }
+      q += maxPos;
+    });
+  });
+
+  // Tied notes become one long note.
+  notes.sort((a, b) => a.q - b.q);
+  const open = new Map(), merged = [];
+  for (const n of notes){
+    const k = n.part + ':' + n.staff + ':' + n.midi, prev = open.get(k);
+    if (n.tieStop && prev && Math.abs(prev.q + prev.dur - n.q) < 1e-3){
+      prev.dur = n.q + n.dur - prev.q;
+      if (!n.tieStart) open.delete(k);
+      continue;
+    }
+    merged.push(n);
+    if (n.tieStart) open.set(k, n); else open.delete(k);
+  }
+  // Loudness from the latest dynamic mark in the same part. Notation apps attach marks between the staves to
+  // staff 1, but in piano music they mean both hands; only a part marked on several staves gets per-staff
+  // loudness. Default mf.
+  dyns.sort((a, b) => a.q - b.q);
+  const perStaff = new Set(parts.map((_, pi) => pi).filter(pi => new Set(dyns.filter(d => d.part === pi && d.staff).map(d => d.staff)).size > 1));
+  for (const n of merged){
+    let v = DYN_VEL.mf;
+    for (const d of dyns){
+      if (d.q > n.q + 1e-6) break;
+      if (d.part === n.part && (!perStaff.has(n.part) || !d.staff || d.staff === n.staff)) v = d.vel;
+    }
+    n.vel = v;
+  }
+  // Tempo map: quarter notes → milliseconds. 100 BPM until the first tempo mark.
+  tempos.sort((a, b) => a.q - b.q);
+  const pts = [{ q:0, ms:0, bpm:100 }];
+  for (const t of tempos){
+    const last = pts[pts.length-1];
+    if (t.q <= last.q + 1e-6){ last.bpm = t.bpm; continue; }
+    pts.push({ q: t.q, ms: last.ms + (t.q - last.q) * 60000 / last.bpm, bpm: t.bpm });
+  }
+  const msAt = q => { let s = pts[0]; for (const p of pts){ if (p.q > q) break; s = p; } return s.ms + (q - s.q) * 60000 / s.bpm; };
+  if (!merged.length) throw new Error('The score has no notes.');
+  const endQ = Math.max(...merged.map(n => n.q + n.dur));
+  return { title, notes: merged, measures, msAt, endQ, bpm: Math.round(pts[0].bpm), hands: new Set(merged.map(n => n.hand)) };
+}
+
+// .mxl is a zip: META-INF/container.xml names the score file inside.
+async function unzipMxl(buf){
+  const u8 = new Uint8Array(buf), dv = new DataView(buf);
+  let e = u8.length - 22;
+  while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) throw new Error('This .mxl file is damaged.');
+  const files = {};
+  for (let i = 0, p = dv.getUint32(e + 16, true), n = dv.getUint16(e + 10, true); i < n; i++){
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const nameLen = dv.getUint16(p + 28, true);
+    const name = new TextDecoder().decode(u8.subarray(p + 46, p + 46 + nameLen));
+    files[name] = { method: dv.getUint16(p + 10, true), size: dv.getUint32(p + 20, true), at: dv.getUint32(p + 42, true) };
+    p += 46 + nameLen + dv.getUint16(p + 30, true) + dv.getUint16(p + 32, true);
+  }
+  const read = async name => {
+    const f = files[name]; if (!f) throw new Error('Missing ' + name + ' in the .mxl file.');
+    const start = f.at + 30 + dv.getUint16(f.at + 26, true) + dv.getUint16(f.at + 28, true);
+    const data = u8.subarray(start, start + f.size);
+    if (f.method === 0) return decodeText(data);
+    if (f.method !== 8) throw new Error('Unsupported compression in the .mxl file.');
+    return decodeText(new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer()));
+  };
+  let main = null;
+  if (files['META-INF/container.xml']){
+    const m = /full-path\s*=\s*"([^"]+)"/.exec(await read('META-INF/container.xml'));
+    if (m && files[m[1]]) main = m[1];
+  }
+  main = main || Object.keys(files).find(n => /\.(musicxml|xml)$/i.test(n) && !/^(META-INF|__MACOSX)\//.test(n));
+  if (!main) throw new Error('No score found inside the .mxl file.');
+  return read(main);
+}
+// MusicXML is UTF-8, sometimes UTF-16 with a byte-order mark.
+function decodeText(u8){
+  if (u8[0] === 0xFF && u8[1] === 0xFE) return new TextDecoder('utf-16le').decode(u8);
+  if (u8[0] === 0xFE && u8[1] === 0xFF) return new TextDecoder('utf-16be').decode(u8);
+  return new TextDecoder().decode(u8);
+}
+
+let score = null;
+function loadScore(text, name, quiet){
+  try { score = parseScore(text); }
+  catch(e){ if (!quiet){ $('#scoreInfo').textContent = e.message; log('Score: ' + e.message, 'bad'); } return; }
+  const handsTxt = score.hands.size > 1 ? 'both hands' : score.hands.has('R') ? 'right hand only' : 'left hand only';
+  $('#scoreInfo').textContent = (score.title || name) + ' · ' + score.measures.length + ' measures · ' + handsTxt
+    + ' · ♩ = ' + score.bpm + ' · ' + fmt(score.msAt(score.endQ));
+  $('#fromMeasure').max = score.measures.length; $('#fromMeasure').value = 1; $('#scorePos').textContent = '';
+  if (!quiet) log('Score loaded: ' + (score.title || name) + ', ' + score.notes.length + ' notes.', 'in');
+  try { localStorage.setItem('fp10.score', JSON.stringify({ name, text })); } catch(e){ /* too big to keep: fine for this visit */ }
+}
+function scoreEvents(sc, hands, speed, from){
+  const q0 = sc.measures[from].q, t0 = sc.msAt(q0), LEAD = 150, ev = [];
+  // Notes from the page use their own tone: match the keyboard's first.
+  ev.push([0, () => { sentProg = null; if (currentTone !== null) sendProg(progMap[currentTone]); }]);
+  for (const n of sc.notes){
+    if (n.q < q0 - 1e-6 || (hands !== 'both' && n.hand !== hands)) continue;
+    const t = (sc.msAt(n.q) - t0) / speed, len = (sc.msAt(n.q + n.dur) - sc.msAt(n.q)) / speed;
+    // Release a little early so repeated notes strike again.
+    note(ev, n.midi, n.vel, LEAD + t, Math.max(20, len - Math.min(40, len * 0.15)));
+  }
+  sc.measures.slice(from).forEach(m => ev.push([LEAD + (sc.msAt(m.q) - t0) / speed, () => {
+    $('#scorePos').textContent = 'Measure ' + m.number + ' of ' + sc.measures[sc.measures.length-1].number;
+  }]));
+  return ev;
+}
+$('#scoreFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  try {
+    const buf = await f.arrayBuffer(), u8 = new Uint8Array(buf);
+    loadScore(u8[0] === 0x50 && u8[1] === 0x4B ? await unzipMxl(buf) : decodeText(u8), f.name.replace(/\.(mxl|musicxml|xml)$/i, ''));
+  } catch(err){ $('#scoreInfo').textContent = err.message; log('Score: ' + err.message, 'bad'); }
+};
+$('#sampleScore').onclick = () => loadScore(SAMPLE_SCORE, 'Ode to Joy (sample)');
+$('#speed').oninput = e => { $('#speedVal').textContent = e.target.value; };
+$('#playScore').onclick = e => {
+  if (!score){ $('#scoreInfo').textContent = 'Open a MusicXML file or try the sample first.'; return; }
+  const n = $('#fromMeasure').value.trim();
+  let from = score.measures.findIndex(m => m.number === n);
+  if (from < 0) from = Math.min(score.measures.length - 1, Math.max(0, (parseInt(n) || 1) - 1));
+  startPlay(scoreEvents(score, $('#hands').value, +$('#speed').value / 100, from), e.currentTarget);
+};
+try { const s = JSON.parse(localStorage.getItem('fp10.score')); if (s && s.text) loadScore(s.text, s.name, true); } catch(e){ /* nothing saved */ }
+
+// Ode to Joy (Beethoven, public domain), two hands, generated for this page.
+const SAMPLE_SCORE = `<?xml version="1.0" encoding="UTF-8"?><score-partwise version="4.0"><work><work-title>Ode to Joy</work-title></work><part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list><part id="P1"><measure number="1"><attributes><divisions>2</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><staves>2</staves><clef number="1"><sign>G</sign><line>2</line></clef><clef number="2"><sign>F</sign><line>4</line></clef></attributes><direction placement="above"><direction-type><words>Moderately</words></direction-type><sound tempo="100"/></direction><direction placement="below"><direction-type><dynamics><p/></dynamics></direction-type><staff>1</staff></direction><note><pitch><step>E</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>E</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>F</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>G</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><backup><duration>8</duration></backup><note><pitch><step>C</step><octave>3</octave></pitch><duration>8</duration><voice>2</voice><type>whole</type><staff>2</staff></note><note><chord/><pitch><step>G</step><octave>3</octave></pitch><duration>8</duration><voice>2</voice><type>whole</type><staff>2</staff></note></measure><measure number="2"><note><pitch><step>G</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>F</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>E</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>D</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><backup><duration>8</duration></backup><note><pitch><step>G</step><octave>2</octave></pitch><duration>8</duration><voice>2</voice><type>whole</type><staff>2</staff></note><note><chord/><pitch><step>G</step><octave>3</octave></pitch><duration>8</duration><voice>2</voice><type>whole</type><staff>2</staff></note></measure><measure number="3"><note><pitch><step>C</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>C</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>D</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>E</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><backup><duration>8</duration></backup><note><pitch><step>C</step><octave>3</octave></pitch><duration>8</duration><voice>2</voice><type>whole</type><staff>2</staff></note><note><chord/><pitch><step>G</step><octave>3</octave></pitch><duration>8</duration><voice>2</voice><type>whole</type><staff>2</staff></note></measure><measure number="4"><note><pitch><step>E</step><octave>4</octave></pitch><duration>3</duration><voice>1</voice><type>quarter</type><dot/><staff>1</staff></note><note><pitch><step>D</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice><type>eighth</type><staff>1</staff></note><note><pitch><step>D</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>half</type><staff>1</staff></note><backup><duration>8</duration></backup><note><pitch><step>G</step><octave>2</octave></pitch><duration>4</duration><voice>2</voice><type>half</type><staff>2</staff></note><note><chord/><pitch><step>G</step><octave>3</octave></pitch><duration>4</duration><voice>2</voice><type>half</type><staff>2</staff></note><note><pitch><step>G</step><octave>2</octave></pitch><duration>4</duration><voice>2</voice><type>half</type><staff>2</staff></note><note><chord/><pitch><step>B</step><octave>2</octave></pitch><duration>4</duration><voice>2</voice><type>half</type><staff>2</staff></note></measure><measure number="5"><direction placement="below"><direction-type><dynamics><f/></dynamics></direction-type><staff>1</staff></direction><note><pitch><step>E</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>E</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>F</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>G</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><backup><duration>8</duration></backup><note><pitch><step>C</step><octave>3</octave></pitch><duration>8</duration><voice>2</voice><type>whole</type><staff>2</staff></note><note><chord/><pitch><step>G</step><octave>3</octave></pitch><duration>8</duration><voice>2</voice><type>whole</type><staff>2</staff></note></measure><measure number="6"><note><pitch><step>G</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>F</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>E</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>D</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><backup><duration>8</duration></backup><note><pitch><step>G</step><octave>2</octave></pitch><duration>8</duration><voice>2</voice><type>whole</type><staff>2</staff></note><note><chord/><pitch><step>G</step><octave>3</octave></pitch><duration>8</duration><voice>2</voice><type>whole</type><staff>2</staff></note></measure><measure number="7"><note><pitch><step>C</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>C</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>D</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><note><pitch><step>E</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note><backup><duration>8</duration></backup><note><pitch><step>C</step><octave>3</octave></pitch><duration>4</duration><voice>2</voice><type>half</type><staff>2</staff></note><note><chord/><pitch><step>G</step><octave>3</octave></pitch><duration>4</duration><voice>2</voice><type>half</type><staff>2</staff></note><note><pitch><step>G</step><octave>2</octave></pitch><duration>4</duration><voice>2</voice><type>half</type><staff>2</staff></note><note><chord/><pitch><step>G</step><octave>3</octave></pitch><duration>4</duration><voice>2</voice><type>half</type><staff>2</staff></note></measure><measure number="8"><note><pitch><step>D</step><octave>4</octave></pitch><duration>3</duration><voice>1</voice><type>quarter</type><dot/><staff>1</staff></note><note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice><type>eighth</type><staff>1</staff></note><note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>half</type><staff>1</staff></note><backup><duration>8</duration></backup><note><pitch><step>C</step><octave>3</octave></pitch><duration>8</duration><voice>2</voice><type>whole</type><staff>2</staff></note><note><chord/><pitch><step>E</step><octave>3</octave></pitch><duration>8</duration><voice>2</voice><type>whole</type><staff>2</staff></note></measure></part></score-partwise>`;
 
 /* ---- Recording ---- */
 const TAKES_KEY = 'fp10.takes';

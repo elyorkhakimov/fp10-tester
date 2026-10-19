@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.WindowInsets
 import android.view.WindowManager
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -28,6 +29,7 @@ class MainActivity : Activity() {
     private lateinit var bridge: Bridge
     private lateinit var link: PianoLink
     private var usingBundled = false
+    private var fileCallback: ValueCallback<Array<Uri>>? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -46,8 +48,20 @@ class MainActivity : Activity() {
             domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false
         }
-        // Keeps confirm() and alert() working.
-        webView.webChromeClient = WebChromeClient()
+        // Keeps confirm() and alert() working, and lets <input type=file> open a score.
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
+                fileCallback?.onReceiveValue(null)
+                fileCallback = callback
+                // Android doesn't know the MusicXML types, so filtering by the page's accept list would hide them.
+                val pick = Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+                return try {
+                    startActivityForResult(Intent.createChooser(pick, "Open a score"), REQ_FILE); true
+                } catch (e: Exception) {
+                    fileCallback = null; false
+                }
+            }
+        }
         webView.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
                 assetLoader.shouldInterceptRequest(request.url)
@@ -100,7 +114,16 @@ class MainActivity : Activity() {
         if (webView.canGoBack()) webView.goBack() else @Suppress("DEPRECATION") super.onBackPressed()
     }
 
-    private val btPermissions = arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+    @Deprecated("Activity API")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION") super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_FILE) return
+        val uri = data?.data
+        fileCallback?.onReceiveValue(if (resultCode == RESULT_OK && uri != null) arrayOf(uri) else null)
+        fileCallback = null
+    }
+
+    private val btPermissions =arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
 
     private fun connectPiano() {
         val missing = btPermissions.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
@@ -119,5 +142,6 @@ class MainActivity : Activity() {
         private const val PAGE_URL = "https://$PAGE_HOST/fp10-tester/"
         private const val BUNDLED_URL = "https://${WebViewAssetLoader.DEFAULT_DOMAIN}/index.html"
         private const val REQ_BT = 1
+        private const val REQ_FILE = 2
     }
 }
