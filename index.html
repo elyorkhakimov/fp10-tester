@@ -68,7 +68,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
     <h2>1 · Connect</h2>
     <div class="row">
       <button id="bleBtn">Bluetooth</button>
-      <button id="usbBtn" class="ghost">USB cable</button>
+      <button id="usbBtn" class="ghost">USB / MIDI app</button>
       <span id="status" class="pill">Not connected</span>
     </div>
     <p id="connMsg" class="note bad" hidden style="margin-top:8px"></p>
@@ -185,8 +185,16 @@ async function initPiano(){
   ];
   for (const s of steps){ if (!link) return; typeof s === 'number' ? await sleep(s) : send(s); }
   if (link.kind === 'ble' && !ble.rx){
-    connMsg('Connected, but the piano is not sending anything back over Bluetooth, so recording and tone sync cannot work. Please copy the MIDI log below and send it.');
-    return;
+    // Nothing back yet: subscribe again and ask for the volume once more before giving up.
+    log('No reply over Bluetooth yet. Subscribing again…');
+    try { await ble.chr.stopNotifications(); await ble.chr.startNotifications(); } catch(e){ log('Resubscribe failed: ' + e.message, 'bad'); }
+    send(sysexRead(REG.masterVolume, 1)); await sleep(1500);
+    if (!link) return;
+    if (!ble.rx){
+      connMsg('Notes and settings go to the piano, but nothing comes back over Bluetooth, so recording does not work this way yet. '
+        + 'For recording, use USB, or connect the piano with a MIDI BLE app and tap "USB / MIDI app".');
+      return;
+    }
   }
   log('Piano ready.' + (link.kind === 'ble' ? ' Received ' + ble.rx + ' Bluetooth packets.' : ''), 'in');
 }
@@ -257,11 +265,15 @@ function setTone(i, fromPiano){
    tone change the piano reports it as bank select + program change, so we learn tone → program from those
    reports and send the program back. [CC0, CC32, program] */
 const PROG_KEY = 'fp10.progMap';
-// The 15 front-panel tones, from Roland's FP-10 MIDI Implementation (its 1-based PC minus 1). Thum Voice was
-// seen in a log from this piano. The other app-only tones aren't documented; they are learned on first use.
+// Reported by this FP-10 over USB after each tone change; the 15 front-panel tones also match Roland's
+// FP-10 MIDI Implementation. Ragtime Piano wasn't in that log; its value is from Roland's general tone list.
+// Programs the piano reports later still override these.
 let progMap = {
-  0:[0,68,0], 1:[16,67,0], 2:[4,64,0], 3:[8,66,1], 5:[0,66,6], 6:[8,66,6], 7:[16,67,4], 8:[0,70,5], 11:[0,0,11],
-  14:[0,71,49], 15:[0,64,48], 17:[0,70,18], 19:[0,66,19], 23:[0,65,54], 26:[0,64,89], 35:[0,66,53] };
+  0:[0,68,0], 1:[16,67,0], 2:[4,64,0], 3:[8,66,1], 4:[0,64,3], 5:[0,66,6], 6:[8,66,6],
+  7:[16,67,4], 8:[0,70,5], 9:[24,65,4], 10:[0,67,7], 11:[0,0,11], 12:[0,0,8], 13:[0,68,98],
+  14:[0,71,49], 15:[0,64,48], 16:[0,68,46], 17:[0,70,18], 18:[0,69,18], 19:[0,66,19], 20:[8,69,19],
+  21:[0,68,21], 22:[8,64,52], 23:[0,65,54], 24:[8,66,52], 25:[8,68,52], 26:[0,64,89], 27:[0,0,24],
+  28:[0,0,25], 29:[1,65,49], 30:[1,64,52], 31:[1,66,89], 32:[0,0,32], 33:[0,66,32], 34:[0,0,33], 35:[0,66,53] };
 try { Object.assign(progMap, JSON.parse(localStorage.getItem(PROG_KEY))); } catch(e){}
 let inProg = [0,0,0], lastProg = null, sentProg = null, pendingTone = null, pendingTimer;
 function sendProg(p){
@@ -345,6 +357,8 @@ async function openBle(){
     const chr = await (await server.getPrimaryService(BLE_SVC)).getCharacteristic(BLE_CHR);
     // BLE-MIDI asks the app to read the characteristic once before notifications; Roland's app does too.
     try { await chr.readValue(); } catch(e){ log('Bluetooth: first read failed (' + e.message + '), continuing.'); }
+    const pr = chr.properties;
+    log('Bluetooth MIDI: ' + ['read','write','writeWithoutResponse','notify','indicate'].filter(k => pr[k]).join(', '));
     chr.removeEventListener('characteristicvaluechanged', onBleData);
     chr.addEventListener('characteristicvaluechanged', onBleData);
     await chr.startNotifications();
@@ -720,7 +734,7 @@ async function shareTake(tk){
 renderTakes();
 
 window.addEventListener('pagehide', () => { if (rec) stopRec(); if (link) stopAll(true); });
-log('Ready. Tap Bluetooth or USB cable.');
+log('Ready. Tap Bluetooth or USB / MIDI app.');
 </script>
 </body>
 </html>
